@@ -1,0 +1,5 @@
+requests
+python-dotenv
+langchain
+langchain-google-genai
+shapely

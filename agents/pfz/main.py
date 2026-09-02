@@ -29,6 +29,7 @@ example: find_nearest_pfz(19.72, 72.70)
 
 import re
 import sys
+import copy
 import json
 import math
 import requests
@@ -358,12 +359,28 @@ def find_nearest_pfz(latitude: float, longitude: float) -> dict:
         nearest_point = result["point"]
         props = nearest_point["properties"]
 
+        # The matched vertex remembers which source feature it came from
+        # (see extract_pfz_points). Look that feature back up in the raw
+        # GeoJSON so we can hand back its *complete* original geometry -
+        # not just the single nearest coordinate - for the frontend map.
+        # deepcopy so nothing downstream can mutate the raw geojson_data.
+        feature_index = nearest_point["feature_index"]
+        matched_feature = geojson_data["features"][feature_index]
+        matched_geometry = copy.deepcopy(matched_feature.get("geometry"))
+
         pfz_block = {
-            "latitude": round(nearest_point["lat"], 5),
-            "longitude": round(nearest_point["lon"], 5),
-            "distance_km": result["distance_km"],
-            "bearing_degrees": result["bearing_degrees"],
-            "direction": result["direction"],
+            "nearest_point": {
+                "latitude": round(nearest_point["lat"], 5),
+                "longitude": round(nearest_point["lon"], 5),
+                "distance_km": result["distance_km"],
+                "bearing_degrees": result["bearing_degrees"],
+                "direction": result["direction"],
+            },
+            # Full original PFZ geometry as returned by INCOIS (e.g.
+            # MultiLineString), coordinates untouched and in their
+            # original [longitude, latitude] order. Used by the
+            # frontend Map to draw the actual PFZ feature.
+            "geometry": matched_geometry,
             "category": _get_property(props, PROP_CATEGORY),
             "uid": _get_property(props, PROP_UID),
             "sno": _get_property(props, PROP_SNO),
