@@ -3,7 +3,7 @@
  * Strictly adheres to normalized backend responses.
  */
 
-export type AssessmentStatus = "SAFE" | "CAUTION" | "NOT_RECOMMENDED";
+export type AssessmentStatus = "SAFE" | "CAUTION" | "HIGH_RISK" | "NOT_RECOMMENDED";
 export type SeverityLevel = "HIGH" | "MEDIUM" | "LOW" | "NONE";
 export type SVASSeverity = "alert" | "safe" | "warning" | "advisory";
 
@@ -91,6 +91,7 @@ export interface OrcaResponse {
   svas: SVASData;
   hazards: Hazard[];
   meta: Meta;
+  recommendation?: string;
 }
 
 export interface PresetLocation {

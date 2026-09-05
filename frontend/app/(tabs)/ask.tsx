@@ -11,9 +11,9 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Send, Bot, User, Sparkles, Compass } from 'lucide-react-native';
+import { Send, User, Sparkles, Compass, RotateCcw } from 'lucide-react-native';
 import { OrcaHeader } from '../../components/OrcaHeader';
-import { queryOrcaAssistant, getCurrentAssessment } from '../../services/api';
+import { queryOrcaAssistant } from '../../services/api';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
 
 interface ChatMessage {
@@ -21,6 +21,8 @@ interface ChatMessage {
   sender: 'user' | 'orca';
   text: string;
   timestamp: string;
+  isError?: boolean;
+  retryQuery?: string;
 }
 
 export default function AskOrcaScreen() {
@@ -37,6 +39,7 @@ export default function AskOrcaScreen() {
   const scrollViewRef = useRef<ScrollView>(null);
 
   const sampleQuestions = [
+    'Is it safe for me to go fishing today?',
     'Can I go fishing tomorrow?',
     'Where is the nearest fishing zone?',
     'Are the waves safe today?',
@@ -67,12 +70,14 @@ export default function AskOrcaScreen() {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, orcaMessage]);
-    } catch {
+    } catch (err: any) {
       const errorMessage: ChatMessage = {
         id: `err-${Date.now()}`,
         sender: 'orca',
-        text: 'Sorry, I could not retrieve ocean conditions. Please check your connection.',
+        text: `Unable to connect to ORCA Backend: ${err?.message || 'Network error'}. Please verify the backend server is running.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isError: true,
+        retryQuery: text,
       };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
@@ -148,16 +153,30 @@ export default function AskOrcaScreen() {
                   style={[
                     styles.messageBubble,
                     isUser ? styles.userBubble : styles.orcaBubble,
+                    msg.isError && styles.errorBubble,
                   ]}
                 >
                   <Text
                     style={[
                       styles.messageText,
                       isUser ? styles.userMessageText : styles.orcaMessageText,
+                      msg.isError && styles.errorMessageText,
                     ]}
                   >
                     {msg.text}
                   </Text>
+
+                  {msg.isError && msg.retryQuery && (
+                    <TouchableOpacity
+                      style={styles.retryButton}
+                      onPress={() => handleSend(msg.retryQuery)}
+                      activeOpacity={0.7}
+                    >
+                      <RotateCcw size={14} color="#DC2626" />
+                      <Text style={styles.retryText}>Retry Query</Text>
+                    </TouchableOpacity>
+                  )}
+
                   <Text
                     style={[
                       styles.timestampText,
@@ -299,7 +318,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   messageBubble: {
-    maxWidth: '78%',
+    maxWidth: '82%',
     borderRadius: RADIUS.lg,
     padding: SPACING.md,
     ...SHADOWS.sm,
@@ -314,6 +333,10 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     borderBottomLeftRadius: 2,
   },
+  errorBubble: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FCA5A5',
+  },
   typingBubble: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -327,7 +350,7 @@ const styles = StyleSheet.create({
   },
   messageText: {
     ...TYPOGRAPHY.bodyLarge,
-    fontSize: 15,
+    fontSize: 14,
     lineHeight: 22,
   },
   userMessageText: {
@@ -337,10 +360,31 @@ const styles = StyleSheet.create({
   orcaMessageText: {
     color: COLORS.textPrimary,
   },
+  errorMessageText: {
+    color: '#991B1B',
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    backgroundColor: '#FEE2E2',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: RADIUS.full,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  retryText: {
+    ...TYPOGRAPHY.caption,
+    color: '#DC2626',
+    fontWeight: '700',
+  },
   timestampText: {
     ...TYPOGRAPHY.caption,
     fontSize: 10,
-    marginTop: 4,
+    marginTop: 6,
     alignSelf: 'flex-end',
   },
   userTimestamp: {

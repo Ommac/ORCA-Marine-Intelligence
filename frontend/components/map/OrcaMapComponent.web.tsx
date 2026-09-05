@@ -1,18 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
-import { Plus, Minus, Navigation, Layers, Check } from 'lucide-react-native';
+import { Plus, Minus, Navigation } from 'lucide-react-native';
 import { OrcaResponse, PFZNearest } from '../../types/orca';
 import {
-  createFishermanPoint,
-  createNearestPFZPoint,
   createDistanceLine,
   pfzToGeoJSON,
   computeBoundingBox,
 } from '../../utils/mapAdapters';
-import { ARCGIS_MAP_STYLE } from '../../constants/map';
+import { SATELLITE_MAP_STYLE } from '../../constants/map';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
 
-interface WebMapProps {
+export interface MapViewProps {
   response: OrcaResponse;
   activeLayers?: {
     pfz: boolean;
@@ -23,11 +21,10 @@ interface WebMapProps {
   onViewDetails?: () => void;
 }
 
-export const WebMap: React.FC<WebMapProps> = ({
+export const OrcaMapComponent: React.FC<MapViewProps> = ({
   response,
   activeLayers = { pfz: true, myLocation: true, distance: true },
   onSelectPFZ,
-  onViewDetails,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
@@ -65,7 +62,7 @@ export const WebMap: React.FC<WebMapProps> = ({
 
         map = new maplibregl.Map({
           container: mapContainerRef.current,
-          style: ARCGIS_MAP_STYLE as any,
+          style: SATELLITE_MAP_STYLE as any,
           center: [fisherLon, fisherLat],
           zoom: 9,
         });
@@ -95,7 +92,7 @@ export const WebMap: React.FC<WebMapProps> = ({
     };
   }, []);
 
-  // Helper to sync layers, markers, and camera bounds
+  // Sync layers, markers, and camera bounds
   const updateMapLayersAndMarkers = (map: any) => {
     if (!map || !map.isStyleLoaded()) return;
 
@@ -115,7 +112,7 @@ export const WebMap: React.FC<WebMapProps> = ({
         data: pfzGeoJSON,
       });
 
-      // PFZ Dark Outer Halo for High Sunlight Contrast
+      // Dark Outer Halo for Sunlight Contrast on Satellite Imagery
       map.addLayer({
         id: 'pfz-halo',
         type: 'line',
@@ -132,7 +129,7 @@ export const WebMap: React.FC<WebMapProps> = ({
         },
       });
 
-      // PFZ Vibrant Emerald Line
+      // Vibrant Emerald Line
       map.addLayer({
         id: 'pfz-line',
         type: 'line',
@@ -170,10 +167,10 @@ export const WebMap: React.FC<WebMapProps> = ({
           visibility: activeLayers.distance ? 'visible' : 'none',
         },
         paint: {
-          'line-color': '#0066CC',
+          'line-color': '#38BDF8',
           'line-width': 3.5,
           'line-dasharray': [2, 2],
-          'line-opacity': 0.9,
+          'line-opacity': 0.95,
         },
       });
     }
@@ -192,7 +189,7 @@ export const WebMap: React.FC<WebMapProps> = ({
           font-size: 11px;
           font-weight: bold;
           white-space: nowrap;
-          box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+          box-shadow: 0 2px 6px rgba(0,0,0,0.5);
           border: 2px solid #38BDF8;
           display: flex;
           align-items: center;
@@ -209,7 +206,7 @@ export const WebMap: React.FC<WebMapProps> = ({
       markersRef.current.push(mFisher);
     }
 
-    // 4. Nearest PFZ Spot Marker (HTML Custom Element with Backend Distance & Direction)
+    // 4. Nearest PFZ Spot Marker (HTML Custom Element)
     if (activeLayers.pfz && nearest && !isNaN(nearest.latitude) && !isNaN(nearest.longitude)) {
       const elPFZ = document.createElement('div');
       elPFZ.className = 'orca-pfz-marker';
@@ -224,7 +221,7 @@ export const WebMap: React.FC<WebMapProps> = ({
           font-size: 12px;
           font-weight: 800;
           white-space: nowrap;
-          box-shadow: 0 3px 8px rgba(0,0,0,0.4);
+          box-shadow: 0 3px 8px rgba(0,0,0,0.5);
           border: 2px solid #86EFAC;
           display: flex;
           flex-direction: column;
@@ -299,7 +296,7 @@ export const WebMap: React.FC<WebMapProps> = ({
       <View style={styles.errorContainer}>
         <Text style={styles.errorTitle}>Map unavailable</Text>
         <Text style={styles.errorSubtitle}>
-          Could not connect to the ArcGIS geographic map tile service.
+          Could not connect to the Satellite geographic map tile service.
         </Text>
       </View>
     );
@@ -307,7 +304,7 @@ export const WebMap: React.FC<WebMapProps> = ({
 
   return (
     <View style={styles.wrapper}>
-      {/* Real Map Container */}
+      {/* Real Satellite Map Container */}
       <div
         ref={mapContainerRef}
         style={{
@@ -323,7 +320,7 @@ export const WebMap: React.FC<WebMapProps> = ({
       {!mapLoaded && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color={COLORS.oceanBlue} />
-          <Text style={styles.loadingText}>Loading ArcGIS Geographic Tiles...</Text>
+          <Text style={styles.loadingText}>Loading Satellite Tiles...</Text>
         </View>
       )}
 
@@ -362,14 +359,14 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.xl,
     overflow: 'hidden',
     position: 'relative',
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#0F172A',
     borderWidth: 1.5,
     borderColor: COLORS.skyBlueBorder,
     ...SHADOWS.md,
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(248, 250, 252, 0.85)',
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 20,
@@ -377,7 +374,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     ...TYPOGRAPHY.bodySmall,
-    color: COLORS.textPrimary,
+    color: '#F8FAFC',
     fontWeight: '700',
   },
   controlsCol: {

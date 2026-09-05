@@ -7,20 +7,25 @@ import {
   pfzToGeoJSON,
   computeBoundingBox,
 } from '../../utils/mapAdapters';
-import { ARCGIS_MAP_STYLE } from '../../constants/map';
+import { SATELLITE_MAP_STYLE, ARCGIS_SATELLITE_TILE_URL } from '../../constants/map';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
 
 let MapLibreGL: any = null;
+let isNativeModuleAvailable = false;
+
 try {
   MapLibreGL = require('@maplibre/maplibre-react-native');
-  if (MapLibreGL && MapLibreGL.setAccessToken) {
-    MapLibreGL.setAccessToken(null);
+  if (MapLibreGL && MapLibreGL.MapView) {
+    if (MapLibreGL.setAccessToken) {
+      MapLibreGL.setAccessToken(null);
+    }
+    isNativeModuleAvailable = true;
   }
 } catch (e) {
-  // Graceful fallback handled below
+  isNativeModuleAvailable = false;
 }
 
-interface NativeMapProps {
+export interface MapViewProps {
   response: OrcaResponse;
   activeLayers?: {
     pfz: boolean;
@@ -31,14 +36,14 @@ interface NativeMapProps {
   onViewDetails?: () => void;
 }
 
-export const NativeMap: React.FC<NativeMapProps> = ({
+export const OrcaMapComponent: React.FC<MapViewProps> = ({
   response,
   activeLayers = { pfz: true, myLocation: true, distance: true },
   onSelectPFZ,
-  onViewDetails,
 }) => {
   const cameraRef = useRef<any>(null);
   const [zoomLevel, setZoomLevel] = useState(9);
+  const [nativeError, setNativeError] = useState<string | null>(null);
 
   const fisherLat = response.request?.latitude ?? 19.72;
   const fisherLon = response.request?.longitude ?? 72.70;
@@ -48,17 +53,6 @@ export const NativeMap: React.FC<NativeMapProps> = ({
   const distanceLineGeoJSON = createDistanceLine(fisherLat, fisherLon, nearest);
   const pfzMultiLineGeoJSON = pfzToGeoJSON(pfz);
   const bbox = computeBoundingBox(fisherLat, fisherLon, nearest, pfz);
-
-  if (!MapLibreGL || !MapLibreGL.MapView) {
-    return (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorTitle}>Map unavailable</Text>
-        <Text style={styles.errorSubtitle}>
-          Native MapLibre module requires a development build.
-        </Text>
-      </View>
-    );
-  }
 
   const handleRecenter = () => {
     if (cameraRef.current) {
@@ -71,14 +65,39 @@ export const NativeMap: React.FC<NativeMapProps> = ({
     }
   };
 
+  const handleZoomIn = () => {
+    setZoomLevel((prev) => Math.min(prev + 1, 16));
+  };
+
+  const handleZoomOut = () => {
+    setZoomLevel((prev) => Math.max(prev - 1, 4));
+  };
+
+  if (!isNativeModuleAvailable || !MapLibreGL || !MapLibreGL.MapView) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorTitle}>Real Satellite Map</Text>
+        <Text style={styles.errorSubtitle}>
+          {nativeError || 'Native MapLibre SDK is active for development/standalone builds.'}
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <MapLibreGL.MapView
         style={styles.fullMap}
-        styleJSON={JSON.stringify(ARCGIS_MAP_STYLE)}
+        styleJSON={JSON.stringify(SATELLITE_MAP_STYLE)}
         logoEnabled={false}
         attributionEnabled={true}
         attributionPosition={{ bottom: 8, right: 8 }}
+        onDidFailLoadingMap={(err: any) => {
+          console.warn('[ORCA Native Map] Loading status:', err);
+          if (err && err.message) {
+            setNativeError(err.message);
+          }
+        }}
       >
         <MapLibreGL.Camera
           ref={cameraRef}
@@ -96,16 +115,30 @@ export const NativeMap: React.FC<NativeMapProps> = ({
           }}
         />
 
-        {/* Distance Line Layer */}
+        {/* ArcGIS Satellite Imagery Raster Source & Layer */}
+        <MapLibreGL.RasterSource
+          id="arcgis-satellite-source"
+          tileUrlTemplates={[ARCGIS_SATELLITE_TILE_URL]}
+          tileSize={256}
+          maxZoom={19}
+        >
+          <MapLibreGL.RasterLayer
+            id="arcgis-satellite-layer-native"
+            sourceID="arcgis-satellite-source"
+            style={{ rasterOpacity: 1.0 }}
+          />
+        </MapLibreGL.RasterSource>
+
+        {/* Distance Line */}
         {activeLayers.distance && distanceLineGeoJSON && (
           <MapLibreGL.ShapeSource id="nativeDistanceSource" shape={distanceLineGeoJSON}>
             <MapLibreGL.LineLayer
               id="nativeDistanceLayer"
               style={{
-                lineColor: '#0066CC',
+                lineColor: '#38BDF8',
                 lineWidth: 3.5,
                 lineDasharray: [2, 2],
-                lineOpacity: 0.9,
+                lineOpacity: 0.95,
               }}
             />
           </MapLibreGL.ShapeSource>
@@ -163,27 +196,15 @@ export const NativeMap: React.FC<NativeMapProps> = ({
         )}
       </MapLibreGL.MapView>
 
-      {/* Touch Map Controls */}
+      {/* Map Touch Controls */}
       <View style={styles.controlsCol}>
-        <TouchableOpacity
-          style={styles.controlBtn}
-          onPress={() => setZoomLevel((prev) => Math.min(prev + 1, 16))}
-          accessibilityLabel="Zoom In"
-        >
+        <TouchableOpacity style={styles.controlBtn} onPress={handleZoomIn} accessibilityLabel="Zoom In">
           <Plus size={20} color={COLORS.textPrimary} />
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.controlBtn}
-          onPress={() => setZoomLevel((prev) => Math.max(prev - 1, 4))}
-          accessibilityLabel="Zoom Out"
-        >
+        <TouchableOpacity style={styles.controlBtn} onPress={handleZoomOut} accessibilityLabel="Zoom Out">
           <Minus size={20} color={COLORS.textPrimary} />
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.controlBtn}
-          onPress={handleRecenter}
-          accessibilityLabel="Recenter Map"
-        >
+        <TouchableOpacity style={styles.controlBtn} onPress={handleRecenter} accessibilityLabel="Recenter Map">
           <Navigation size={18} color={COLORS.oceanBlue} />
         </TouchableOpacity>
       </View>
@@ -198,7 +219,7 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.xl,
     overflow: 'hidden',
     position: 'relative',
-    backgroundColor: '#E2E8F0',
+    backgroundColor: '#0F172A',
     borderWidth: 1.5,
     borderColor: COLORS.skyBlueBorder,
     ...SHADOWS.md,

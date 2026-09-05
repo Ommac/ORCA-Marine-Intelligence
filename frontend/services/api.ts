@@ -2,14 +2,14 @@
  * ORCA Centralized API Service
  * 
  * Central data gateway for all screens and components.
- * Consumes and returns strictly normalized OrcaResponse objects.
+ * Consumes and returns strictly normalized OrcaResponse objects from the live ORCA backend.
  */
 
-import { OrcaRequest, OrcaResponse } from '../types/orca';
+import { OrcaRequest, OrcaResponse, AssessmentStatus, SeverityLevel, Hazard } from '../types/orca';
 import { getMockResponseForRequest, MOCK_PALGHAR_RESPONSE } from '../mocks/orcaResponse';
 
-// Configuration Flag: Set to true for offline mock mode, or false to call live backend
-export const USE_MOCK_API = true;
+// Configuration Flag: Set to false for live backend API calls (POST /api/orca/assess)
+export const USE_MOCK_API = false;
 
 // Backend Base URL configured via environment variable
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
@@ -43,37 +43,136 @@ function notifyAssessmentListeners(response: OrcaResponse) {
 }
 
 /**
+ * Normalizes raw structured response from POST /api/orca/assess into OrcaResponse
+ */
+export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaResponse {
+  const riskStatus: AssessmentStatus =
+    raw?.risk?.status || raw?.risk?.risk_status || 'SAFE';
+
+  const riskScore: number = raw?.risk?.risk_score ?? 0;
+
+  const summaryText: string =
+    raw?.recommendation ||
+    (raw?.risk?.reasons && raw?.risk?.reasons.length > 0
+      ? raw.risk.reasons.join(' ')
+      : `Overall status is ${riskStatus} (Risk score: ${riskScore}/100).`);
+
+  // PFZ Mapping
+  const pfzRaw = raw?.pfz || {};
+  const isPfzAvailable = pfzRaw.status === 'success';
+  const pfzDetails = pfzRaw.pfz || {};
+  const pfzNearest = pfzDetails.nearest || undefined;
+
+  // Marine Weather Mapping
+  const marineWeatherRaw = raw?.marine_weather || {};
+  const isMarineAvailable = marineWeatherRaw.status === 'success';
+  const weatherData = marineWeatherRaw.weather || {};
+  const marineData = marineWeatherRaw.marine || {};
+
+  // SVAS Mapping
+  const svasRaw = raw?.svas || {};
+  const isSvasAvailable = svasRaw.status === 'success';
+  const svasAdvisory = svasRaw.advisory || {};
+
+  // Hazards Mapping from Ocean Analysis
+  const oceanRaw = raw?.ocean_analysis || {};
+  const warningsList: any[] = Array.isArray(oceanRaw.warnings) ? oceanRaw.warnings : [];
+  const hazardsList: Hazard[] = warningsList.map((w: any, idx: number) => ({
+    id: `hazard-${idx}`,
+    type: w.type || 'Environmental Warning',
+    severity: (w.severity?.toUpperCase() as SeverityLevel) || 'MEDIUM',
+    title: w.type || 'Ocean Advisory',
+    description: w.message || 'Environmental hazard reported.',
+  }));
+
+  return {
+    request: req || {
+      latitude: raw?.input?.latitude ?? 19.72,
+      longitude: raw?.input?.longitude ?? 72.70,
+      date: raw?.input?.date ?? '2026-09-04',
+      boat_width_m: raw?.input?.boat_width_m ?? 5.0,
+      query: raw?.input?.query,
+    },
+    assessment: {
+      status: riskStatus,
+      risk_score: riskScore,
+      summary: summaryText,
+    },
+    pfz: {
+      available: isPfzAvailable,
+      nearest: pfzNearest,
+      geometry: pfzDetails.geometry,
+      message: pfzRaw.error || pfzRaw.reason || (isPfzAvailable ? undefined : 'PFZ data feed is currently unavailable.'),
+    },
+    marine: {
+      available: isMarineAvailable,
+      temperature_c: weatherData.temperature_c,
+      wind_speed_knots: weatherData.wind_speed_knots,
+      wind_gusts_knots: weatherData.wind_gusts_knots,
+      wave_height_m: marineData.wave_height_m,
+      wave_period_seconds: marineData.wave_period_seconds,
+      sea_surface_temperature_c: marineData.sea_surface_temperature_c,
+      ocean_current_velocity_kmh: marineData.ocean_current_velocity_kmh,
+      wind_direction_degrees: weatherData.wind_direction_degrees,
+      wave_direction_degrees: marineData.wave_direction_degrees,
+      ocean_current_direction_degrees: marineData.ocean_current_direction_degrees,
+    },
+    svas: {
+      available: isSvasAvailable,
+      district: svasRaw.area?.district || svasAdvisory.district,
+      state: svasRaw.area?.state || svasAdvisory.state,
+      severity: svasAdvisory.severity,
+      message: svasAdvisory.message || svasRaw.reason || svasRaw.error || (isSvasAvailable ? undefined : 'Small Vessel Advisory Service (SVAS) data is currently unavailable from official feeds for this location/date.'),
+      reason: svasRaw.reason,
+    },
+    hazards: hazardsList,
+    meta: {
+      generated_at: raw?.timestamp || new Date().toISOString(),
+      sources: raw?.risk?.source_status ? Object.keys(raw.risk.source_status) : [],
+      version: '1.0.0',
+    },
+    recommendation: raw?.recommendation,
+  };
+}
+
+/**
  * Primary API method to fetch marine condition assessment.
- * Handles both Mock Mode and Live Backend REST calls.
+ * Calls POST /api/orca/assess on backend.
  */
 export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaResponse> {
   if (USE_MOCK_API) {
-    // Simulate network latency (1000ms) for realistic UX and loading feedback
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    
     const mockData = getMockResponseForRequest(request);
     notifyAssessmentListeners(mockData);
     return mockData;
   }
 
   try {
-    const endpoint = `${BASE_URL.replace(/\/+$/, '')}/api/orca/query`;
+    const endpoint = `${BASE_URL.replace(/\/+$/, '')}/api/orca/assess`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify({
+        query: request.query || 'Check marine conditions for fishing.',
+        latitude: request.latitude,
+        longitude: request.longitude,
+        date: request.date,
+        boat_width_m: request.boat_width_m,
+      }),
     });
 
     if (!response.ok) {
-      throw new Error(`Server returned status ${response.status}: ${response.statusText}`);
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Server returned status ${response.status}: ${errText || response.statusText}`);
     }
 
-    const data: OrcaResponse = await response.json();
-    notifyAssessmentListeners(data);
-    return data;
+    const rawData = await response.json();
+    const normalized: OrcaResponse = normalizeBackendResponse(rawData, request);
+    notifyAssessmentListeners(normalized);
+    return normalized;
   } catch (error: any) {
     console.error('ORCA API request failed:', error);
     throw new Error(error?.message || 'ORCA could not fetch the latest conditions.');
@@ -82,14 +181,14 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
 
 /**
  * Natural language chat query method for the "Ask ORCA" screen.
+ * Calls POST /api/orca/assess
  */
 export async function queryOrcaAssistant(
   queryText: string,
   context?: Partial<OrcaRequest>
-): Promise<{ text: string; assessment?: OrcaResponse }> {
+): Promise<{ text: string; assessment?: OrcaResponse; rawBackendResponse?: any }> {
   if (USE_MOCK_API) {
     await new Promise((resolve) => setTimeout(resolve, 900));
-    
     const current = getCurrentAssessment();
     const status = current.assessment.status;
     const pfzDist = current.pfz.nearest?.distance_km;
@@ -118,56 +217,49 @@ export async function queryOrcaAssistant(
       }
     }
 
-    if (lower.includes('pfz') || lower.includes('zone') || lower.includes('fish')) {
-      return {
-        text: `The nearest Potential Fishing Zone is located ${pfzDist ?? 39.0} km away in direction ${pfzDir ?? 'W'}. You can view the live zone polygon and route on the Map tab!`,
-        assessment: current,
-      };
-    }
-
-    if (lower.includes('wave') || lower.includes('wind') || lower.includes('weather')) {
-      return {
-        text: `Current sea conditions: Waves are ${waves ?? 1.4} m with period of ${current.marine.wave_period_seconds ?? 8.0}s. Wind is ${wind ?? 8.7} knots with peak gusts up to ${current.marine.wind_gusts_knots ?? 18.3} knots.`,
-        assessment: current,
-      };
-    }
-
     return {
       text: `Based on your selected location and boat size, overall conditions are rated ${status} (Risk score: ${current.assessment.risk_score}/100). Nearest fishing zone is ${pfzDist ?? 39.0} km away. Stay safe and monitor alerts!`,
       assessment: current,
     };
   }
 
-  // Real backend call
+  const reqBody: OrcaRequest = {
+    query: queryText,
+    latitude: context?.latitude ?? currentAssessmentState.request?.latitude ?? 19.72,
+    longitude: context?.longitude ?? currentAssessmentState.request?.longitude ?? 72.70,
+    date: context?.date ?? currentAssessmentState.request?.date ?? '2026-09-04',
+    boat_width_m: context?.boat_width_m ?? currentAssessmentState.request?.boat_width_m ?? 5.0,
+  };
+
   try {
-    const endpoint = `${BASE_URL.replace(/\/+$/, '')}/api/orca/query`;
+    const endpoint = `${BASE_URL.replace(/\/+$/, '')}/api/orca/assess`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Accept': 'application/json',
       },
-      body: JSON.stringify({
-        query: queryText,
-        latitude: context?.latitude ?? currentAssessmentState.request?.latitude ?? 19.72,
-        longitude: context?.longitude ?? currentAssessmentState.request?.longitude ?? 72.70,
-        date: context?.date ?? currentAssessmentState.request?.date ?? '2026-09-03',
-        boat_width_m: context?.boat_width_m ?? currentAssessmentState.request?.boat_width_m ?? 5.0,
-      }),
+      body: JSON.stringify(reqBody),
     });
 
     if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
+      const errText = await response.text().catch(() => '');
+      throw new Error(`API error ${response.status}: ${errText || response.statusText}`);
     }
 
-    const data: OrcaResponse = await response.json();
-    notifyAssessmentListeners(data);
+    const data = await response.json();
+    const normalized = normalizeBackendResponse(data, reqBody);
+    notifyAssessmentListeners(normalized);
+
+    const answerText = data.recommendation || normalized.assessment.summary || 'Assessment received from ORCA.';
+
     return {
-      text: data.assessment.summary || 'Assessment updated.',
-      assessment: data,
+      text: answerText,
+      assessment: normalized,
+      rawBackendResponse: data,
     };
   } catch (error: any) {
-    return {
-      text: 'Sorry, I could not connect to the ORCA network right now. Please try again in a few moments.',
-    };
+    console.error('queryOrcaAssistant live backend error:', error);
+    throw error;
   }
 }

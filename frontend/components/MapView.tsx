@@ -1,8 +1,6 @@
 import React from 'react';
-import { Platform } from 'react-native';
 import { OrcaResponse, PFZNearest } from '../types/orca';
-import { WebMap } from './map/WebMap';
-import { NativeMap } from './map/NativeMap';
+import { OrcaMapComponent } from './map/OrcaMapComponent';
 
 export interface MapViewProps {
   response: OrcaResponse;
@@ -16,14 +14,12 @@ export interface MapViewProps {
 }
 
 /**
- * Universal Geographic Map Component
- * Renders MapLibre GL JS on Web and @maplibre/maplibre-react-native on Native
- * with ArcGIS World Street Map MapServer as the live dynamic geographic basemap.
+ * Universal Geographic Satellite Map Component
+ * Delegates platform map rendering via Metro platform extension resolution:
+ * - OrcaMapComponent.web.tsx on Web (MapLibre GL JS)
+ * - OrcaMapComponent.native.tsx on Native Android/iOS (@maplibre/maplibre-react-native)
+ * Both platforms use online ArcGIS World Imagery Satellite tiles.
  */
 export const OrcaMapView: React.FC<MapViewProps> = (props) => {
-  if (Platform.OS === 'web') {
-    return <WebMap {...props} />;
-  }
-
-  return <NativeMap {...props} />;
+  return <OrcaMapComponent {...props} />;
 };
