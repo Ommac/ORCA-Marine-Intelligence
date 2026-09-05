@@ -1,0 +1,9 @@
+requests
+python-dotenv
+langchain
+langchain-google-genai
+shapely
+langgraph>=0.6.0
+langchain-core>=0.3.0
+google-genai>=1.0.0
+python-dotenv>=1.0.0
