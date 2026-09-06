@@ -128,6 +128,7 @@ class ORCAState(TypedDict, total=False):
     longitude: float
     date: Optional[str]
     boat_width_m: Optional[float]
+    mode: Optional[str]
 
     # Supervisor
     intent: str
@@ -240,6 +241,8 @@ def classify_query(query: str) -> Tuple[str, List[str], bool]:
     # Detect safety and hazard avoidance intent before ordinary specialist routing.
     # Catches questions about safety, hazards to avoid, geofencing restrictions, danger, etc.
     safety_and_hazard_keywords = [
+        "check conditions", "check conditions for", "check condition",
+        "check marine conditions", "check sea conditions",
         "is it safe", "is safe", "safe to", "safe for", "whether it is safe",
         "whether safe", "tell me whether", "tell me if it is safe",
         "can i go", "can we go", "can i sail", "can we sail",
@@ -345,7 +348,15 @@ def supervisor_node(state: ORCAState) -> Dict[str, Any]:
     Does NOT calculate risk and does NOT fabricate marine data.
     """
     query = state.get("query", "")
-    intent, selected_agents, risk_required = classify_query(query)
+    mode = state.get("mode")
+
+    # If explicitly requested via trip_assessment mode (or empty query), run full safety assessment
+    if mode == "trip_assessment" or (mode != "chat_query" and ("check conditions" in query.lower() or not query)):
+        intent = "safety_assessment"
+        selected_agents = ALL_SPECIALISTS.copy()
+        risk_required = True
+    else:
+        intent, selected_agents, risk_required = classify_query(query)
 
     boat_width = state.get("boat_width_m")
     if boat_width is None:
@@ -410,9 +421,14 @@ def marine_weather_node(state: ORCAState) -> Dict[str, Any]:
     """Execute Marine Weather Agent."""
     lat = state.get("latitude")
     lon = state.get("longitude")
+    date_val = state.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     logger.info("[MARINE WEATHER AGENT] Starting...")
     try:
-        result = fetch_marine_weather(latitude=float(lat), longitude=float(lon))
+        result = fetch_marine_weather(
+            latitude=float(lat),
+            longitude=float(lon),
+            requested_date=str(date_val),
+        )
         if not isinstance(result, dict):
             result = {"status": "success", "data": result}
     except Exception as exc:
@@ -1131,6 +1147,7 @@ def run_orca(
     boat_width_m: Optional[float] = 5.0,
     query: str = "",
     request_id: Optional[str] = None,
+    mode: Optional[str] = "trip_assessment",
 ) -> Dict[str, Any]:
     """
     Main public ORCA entry point.
@@ -1148,6 +1165,7 @@ def run_orca(
         "longitude": float(longitude) if longitude is not None else 72.70,
         "date": date,
         "boat_width_m": float(boat_width_m) if boat_width_m is not None else 5.0,
+        "mode": mode or "trip_assessment",
     }
 
     result = orca_graph.invoke(initial_state)
@@ -1161,6 +1179,7 @@ def orchestrate_orca_assessment(
     boat_width_m: Optional[float] = 5.0,
     query: str = "",
     request_id: Optional[str] = None,
+    mode: Optional[str] = "trip_assessment",
 ) -> Dict[str, Any]:
     """Compatibility alias for FastAPI and external bridges."""
     return run_orca(
@@ -1170,5 +1189,6 @@ def orchestrate_orca_assessment(
         boat_width_m=boat_width_m,
         query=query,
         request_id=request_id,
+        mode=mode,
     )
 

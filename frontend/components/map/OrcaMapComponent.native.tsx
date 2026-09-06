@@ -26,7 +26,7 @@ try {
 }
 
 export interface MapViewProps {
-  response: OrcaResponse;
+  response?: OrcaResponse | null;
   activeLayers?: {
     pfz: boolean;
     myLocation: boolean;
@@ -45,10 +45,10 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
   const [zoomLevel, setZoomLevel] = useState(9);
   const [nativeError, setNativeError] = useState<string | null>(null);
 
-  const fisherLat = response.request?.latitude ?? 19.72;
-  const fisherLon = response.request?.longitude ?? 72.70;
-  const nearest = response.pfz.nearest;
-  const pfz = response.pfz;
+  const fisherLat = response?.request?.latitude ?? 19.72;
+  const fisherLon = response?.request?.longitude ?? 72.70;
+  const nearest = response?.pfz?.nearest;
+  const pfz = response?.pfz;
 
   const distanceLineGeoJSON = createDistanceLine(fisherLat, fisherLon, nearest);
   const pfzMultiLineGeoJSON = pfzToGeoJSON(pfz);

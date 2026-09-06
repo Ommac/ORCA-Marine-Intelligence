@@ -15,7 +15,7 @@ import { COLORS, SPACING } from '../../constants/theme';
 
 export default function MapScreen() {
   const router = useRouter();
-  const [data, setData] = useState<OrcaResponse>(getCurrentAssessment());
+  const [data, setData] = useState<OrcaResponse | null>(getCurrentAssessment());
   const [activeLayers, setActiveLayers] = useState<ActiveMapLayers>({
     pfz: true,
     myLocation: true,
@@ -68,7 +68,7 @@ export default function MapScreen() {
         </View>
 
         {/* Nearest PFZ Summary Card with Action */}
-        <PFZCard pfz={data.pfz} onViewOnMap={handleViewAssessment} />
+        <PFZCard pfz={data?.pfz} onViewOnMap={handleViewAssessment} />
       </ScrollView>
     </SafeAreaView>
   );

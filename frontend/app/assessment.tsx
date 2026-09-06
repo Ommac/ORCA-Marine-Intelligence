@@ -36,7 +36,7 @@ import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../constants/theme
 export default function AssessmentScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const [data, setData] = useState<OrcaResponse>(getCurrentAssessment());
+  const [data, setData] = useState<OrcaResponse | null>(getCurrentAssessment());
 
   useEffect(() => {
     // Keep synced with centralized active session
@@ -47,6 +47,7 @@ export default function AssessmentScreen() {
   }, []);
 
   const handleShare = async () => {
+    if (!data) return;
     try {
       await Share.share({
         message: `ORCA Marine Assessment for ${data.request?.date || 'Today'}: Overall condition is ${data.assessment.status} (Risk Score: ${data.assessment.risk_score}/100). Nearest Fishing Zone: ${data.pfz.nearest?.distance_km ?? 'N/A'} km away.`,
@@ -82,56 +83,65 @@ export default function AssessmentScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Selected Trip Parameters Chips */}
-        <View style={styles.tripSummaryRow}>
-          <View style={styles.tripChip}>
-            <MapPin size={14} color={COLORS.oceanBlue} />
-            <Text style={styles.tripChipText} numberOfLines={1}>
-              {params.locationName || `${data.request?.latitude?.toFixed(2)}°N, ${data.request?.longitude?.toFixed(2)}°E`}
-            </Text>
-          </View>
+        {!data ? (
+          <EmptyState
+            title="Assessment Unavailable"
+            message="No active marine assessment found. Please tap 'Check Conditions' from the Home screen."
+          />
+        ) : (
+          <>
+            {/* Selected Trip Parameters Chips */}
+            <View style={styles.tripSummaryRow}>
+              <View style={styles.tripChip}>
+                <MapPin size={14} color={COLORS.oceanBlue} />
+                <Text style={styles.tripChipText} numberOfLines={1}>
+                  {params.locationName || `${data.request?.latitude?.toFixed(2)}°N, ${data.request?.longitude?.toFixed(2)}°E`}
+                </Text>
+              </View>
 
-          <View style={styles.tripChip}>
-            <Calendar size={14} color={COLORS.oceanBlue} />
-            <Text style={styles.tripChipText}>
-              {formatDateToFisherman(data.request?.date || getTodayDateISO())}
-            </Text>
-          </View>
+              <View style={styles.tripChip}>
+                <Calendar size={14} color={COLORS.oceanBlue} />
+                <Text style={styles.tripChipText}>
+                  {formatDateToFisherman(data.request?.date || getTodayDateISO())}
+                </Text>
+              </View>
 
-          <View style={styles.tripChip}>
-            <Ship size={14} color={COLORS.oceanBlue} />
-            <Text style={styles.tripChipText}>
-              {data.request?.boat_width_m ? `${data.request.boat_width_m} m Boat` : '5 m Boat'}
-            </Text>
-          </View>
-        </View>
+              <View style={styles.tripChip}>
+                <Ship size={14} color={COLORS.oceanBlue} />
+                <Text style={styles.tripChipText}>
+                  {data.request?.boat_width_m ? `${data.request.boat_width_m} m Boat` : '5 m Boat'}
+                </Text>
+              </View>
+            </View>
 
-        {/* 1. Large Status & Risk Card */}
-        <RiskCard assessment={data.assessment} />
+            {/* 1. Large Status & Risk Card */}
+            <RiskCard assessment={data.assessment} />
 
-        {/* 2. Potential Fishing Zone (PFZ) Card */}
-        <PFZCard pfz={data.pfz} onViewOnMap={handleViewOnMap} />
+            {/* 2. Potential Fishing Zone (PFZ) Card */}
+            <PFZCard pfz={data.pfz} onViewOnMap={handleViewOnMap} />
 
-        {/* 3. Sea Conditions Grid Card */}
-        <MarineConditionsCard marine={data.marine} />
+            {/* 3. Sea Conditions Grid Card */}
+            <MarineConditionsCard marine={data.marine} />
 
-        {/* 4. Small Vessel Advisory (SVAS) Card */}
-        <SVASCard svas={data.svas} dateStr={data.request?.date} />
+            {/* 4. Small Vessel Advisory (SVAS) Card */}
+            <SVASCard svas={data.svas} dateStr={data.request?.date} />
 
-        {/* 5. Hazards & Emergency Warning Checklist */}
-        <HazardCard hazards={data.hazards} />
+            {/* 5. Hazards & Emergency Warning Checklist */}
+            <HazardCard hazards={data.hazards} />
 
-        {/* 6. "Why this result?" Fisherman Explanation Card */}
-        <View style={styles.explanationCard}>
-          <View style={styles.explanationHeader}>
-            <HelpCircle size={20} color={COLORS.oceanBlue} />
-            <Text style={styles.explanationTitle}>Why this result?</Text>
-          </View>
-          <Text style={styles.explanationText}>
-            {data.assessment.summary ||
-              'ORCA analyzed combined oceanographic factors including wave height, wind speeds, distance to high-chlorophyll fishing zones, and active government advisories from INCOIS to produce this recommendation.'}
-          </Text>
-        </View>
+            {/* 6. "Why this result?" Fisherman Explanation Card */}
+            <View style={styles.explanationCard}>
+              <View style={styles.explanationHeader}>
+                <HelpCircle size={20} color={COLORS.oceanBlue} />
+                <Text style={styles.explanationTitle}>Why this result?</Text>
+              </View>
+              <Text style={styles.explanationText}>
+                {data.assessment.summary ||
+                  'ORCA analyzed combined oceanographic factors including wave height, wind speeds, distance to high-chlorophyll fishing zones, and active government advisories from INCOIS to produce this recommendation.'}
+              </Text>
+            </View>
+          </>
+        )}
 
         {/* Bottom CTA to open full map */}
         <TouchableOpacity

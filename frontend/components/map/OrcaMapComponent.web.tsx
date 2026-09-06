@@ -11,7 +11,7 @@ import { SATELLITE_MAP_STYLE } from '../../constants/map';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
 
 export interface MapViewProps {
-  response: OrcaResponse;
+  response?: OrcaResponse | null;
   activeLayers?: {
     pfz: boolean;
     myLocation: boolean;
@@ -32,10 +32,10 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
 
-  const fisherLat = response.request?.latitude ?? 19.72;
-  const fisherLon = response.request?.longitude ?? 72.70;
-  const nearest = response.pfz.nearest;
-  const pfz = response.pfz;
+  const fisherLat = response?.request?.latitude ?? 19.72;
+  const fisherLon = response?.request?.longitude ?? 72.70;
+  const nearest = response?.pfz?.nearest;
+  const pfz = response?.pfz;
 
   // Inject MapLibre GL CSS on web
   useEffect(() => {

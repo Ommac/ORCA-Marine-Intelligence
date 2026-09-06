@@ -33,6 +33,7 @@ import copy
 import json
 import math
 import requests
+from datetime import datetime
 
 # ---------------------------------------------------------------------------
 # Config
@@ -368,6 +369,15 @@ def find_nearest_pfz(latitude: float, longitude: float) -> dict:
         matched_feature = geojson_data["features"][feature_index]
         matched_geometry = copy.deepcopy(matched_feature.get("geometry"))
 
+        data_year = _get_property(props, PROP_YEAR)
+        julian_day = _get_property(props, PROP_JULIAN_DAY)
+        obs_date_str = None
+        if data_year and julian_day:
+            try:
+                obs_date_str = datetime.strptime(f"{data_year} {julian_day}", "%Y %j").strftime("%Y-%m-%d")
+            except (ValueError, TypeError):
+                obs_date_str = None
+
         pfz_block = {
             "nearest_point": {
                 "latitude": round(nearest_point["lat"], 5),
@@ -384,8 +394,12 @@ def find_nearest_pfz(latitude: float, longitude: float) -> dict:
             "category": _get_property(props, PROP_CATEGORY),
             "uid": _get_property(props, PROP_UID),
             "sno": _get_property(props, PROP_SNO),
-            "data_year": _get_property(props, PROP_YEAR),
-            "julian_day": _get_property(props, PROP_JULIAN_DAY),
+            "data_year": data_year,
+            "julian_day": julian_day,
+            "observation_date": obs_date_str,
+            "data_type": "latest_observation",
+            "is_forecast": False,
+            "note": "PFZ is satellite observation data, not a future forecast.",
             # INCOIS's WFS response does not include an explicit validity
             # window for the PFZ advisory - we do not fabricate one.
             "valid_until": None,

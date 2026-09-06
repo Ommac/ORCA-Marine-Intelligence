@@ -74,6 +74,7 @@ class OrcaAssessRequest(BaseModel):
     date: str = Field(..., description="Requested target date in YYYY-MM-DD format.")
     boat_width_m: float = Field(..., gt=0.0, description="Vessel width in meters.")
     request_id: Optional[str] = Field(None, description="Client request UUID for correlation.")
+    mode: Optional[str] = Field("trip_assessment", description="Request mode: 'trip_assessment' or 'chat_query'")
 
     model_config = {
         "json_schema_extra": {
@@ -84,6 +85,7 @@ class OrcaAssessRequest(BaseModel):
                 "date": "2026-09-04",
                 "boat_width_m": 5.0,
                 "request_id": "req-12345",
+                "mode": "trip_assessment",
             }
         }
     }
@@ -118,6 +120,7 @@ def assess_marine_conditions(payload: OrcaAssessRequest) -> Dict[str, Any]:
             boat_width_m=payload.boat_width_m,
             query=payload.query,
             request_id=payload.request_id,
+            mode=payload.mode,
         )
         return assessment
     except Exception as exc:

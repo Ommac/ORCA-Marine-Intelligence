@@ -22,7 +22,7 @@ export const PFZCard: React.FC<PFZCardProps> = ({ pfz, onViewOnMap }) => {
           </View>
           <View>
             <Text style={styles.title}>Fishing Zone</Text>
-            <Text style={styles.subtitle}>Potential Fishing Zone (INCOIS)</Text>
+            <Text style={styles.subtitle}>Latest Satellite Observation (INCOIS)</Text>
           </View>
         </View>
 

@@ -14,6 +14,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PRESET_LOCATIONS } from '../constants/locations';
 import { PresetLocation } from '../types/orca';
+import { clearCurrentAssessment } from './api';
 
 export interface TripLocation {
   id?: string;
@@ -182,6 +183,7 @@ export function setActiveLocation(location: TripLocation | PresetLocation): void
     hasUserSelectedLocation: true,
   };
 
+  clearCurrentAssessment();
   notifyTripListeners();
   persistTripState(activeTripState);
 }
@@ -199,6 +201,7 @@ export function setActiveDate(dateISO: string): void {
     date: dateISO,
   };
 
+  clearCurrentAssessment();
   notifyTripListeners();
   persistTripState(activeTripState);
 }
@@ -216,6 +219,7 @@ export function setActiveBoatWidth(widthM: number): void {
     boatWidthM: widthM,
   };
 
+  clearCurrentAssessment();
   notifyTripListeners();
   persistTripState(activeTripState);
 }

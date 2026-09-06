@@ -3,7 +3,7 @@ import { OrcaResponse, PFZNearest } from '../types/orca';
 import { OrcaMapComponent } from './map/OrcaMapComponent';
 
 export interface MapViewProps {
-  response: OrcaResponse;
+  response?: OrcaResponse | null;
   activeLayers?: {
     pfz: boolean;
     myLocation: boolean;

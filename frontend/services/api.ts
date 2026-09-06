@@ -5,7 +5,7 @@
  * Consumes and returns strictly normalized OrcaResponse objects from the live ORCA backend.
  */
 
-import { OrcaRequest, OrcaResponse, AssessmentStatus, SeverityLevel, Hazard } from '../types/orca';
+import { OrcaRequest, OrcaResponse, AssessmentStatus, SeverityLevel, Hazard, RiskFactor, OrcaExplanation, LightningData } from '../types/orca';
 import { getMockResponseForRequest, MOCK_PALGHAR_RESPONSE } from '../mocks/orcaResponse';
 import { getActiveTrip, getTodayDateISO, setActiveLocation, setActiveDate, setActiveBoatWidth } from './tripStore';
 
@@ -16,13 +16,18 @@ export const USE_MOCK_API = false;
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 
 // In-memory active session cache so tabs share the same trip state seamlessly
-let currentAssessmentState: OrcaResponse = MOCK_PALGHAR_RESPONSE;
+let currentAssessmentState: OrcaResponse | null = null;
 
-type AssessmentListener = (response: OrcaResponse) => void;
+type AssessmentListener = (response: OrcaResponse | null) => void;
 const listeners: Set<AssessmentListener> = new Set();
 
-export function getCurrentAssessment(): OrcaResponse {
+export function getCurrentAssessment(): OrcaResponse | null {
   return currentAssessmentState;
+}
+
+export function clearCurrentAssessment(): void {
+  currentAssessmentState = null;
+  notifyAssessmentListeners(null);
 }
 
 export function subscribeToAssessment(listener: AssessmentListener): () => void {
@@ -32,7 +37,7 @@ export function subscribeToAssessment(listener: AssessmentListener): () => void 
   };
 }
 
-function notifyAssessmentListeners(response: OrcaResponse) {
+function notifyAssessmentListeners(response: OrcaResponse | null) {
   currentAssessmentState = response;
   listeners.forEach((listener) => {
     try {
@@ -139,6 +144,13 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
       request_id: requestId,
     },
     recommendation: raw?.recommendation,
+    // Extended alert system fields (additive — previously discarded by normalizer)
+    explanation: raw?.explanation || undefined,
+    riskFactors: Array.isArray(raw?.risk?.factors) ? raw.risk.factors : undefined,
+    riskReasons: Array.isArray(raw?.risk?.reasons) ? raw.risk.reasons : undefined,
+    lightning: oceanRaw?.lightning || undefined,
+    hardOverride: raw?.risk?.hard_override ?? false,
+    overrideReason: raw?.risk?.override_reason || undefined,
   };
 }
 
@@ -147,6 +159,9 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
  * Calls POST /api/orca/assess on backend.
  */
 export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaResponse> {
+  // Clear any previous/stale assessment while loading new conditions
+  clearCurrentAssessment();
+
   const activeTrip = getActiveTrip();
   const effectiveRequest: OrcaRequest = {
     query: request.query || `Check conditions for ${activeTrip.location.name}`,
@@ -179,6 +194,7 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
         date: effectiveRequest.date,
         boat_width_m: effectiveRequest.boat_width_m,
         request_id: effectiveRequest.request_id,
+        mode: 'trip_assessment',
       }),
     });
 
@@ -193,6 +209,7 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
     return normalized;
   } catch (error: any) {
     console.error('ORCA API request failed:', error);
+    clearCurrentAssessment();
     throw new Error(error?.message || 'ORCA could not fetch the latest conditions.');
   }
 }
@@ -213,7 +230,7 @@ export async function queryOrcaAssistant(
 
   if (USE_MOCK_API) {
     await new Promise((resolve) => setTimeout(resolve, 900));
-    const current = getCurrentAssessment();
+    const current = getCurrentAssessment() || MOCK_PALGHAR_RESPONSE;
     const status = current.assessment.status;
     const pfzDist = current.pfz.nearest?.distance_km;
     const pfzDir = current.pfz.nearest?.direction;
@@ -256,6 +273,7 @@ export async function queryOrcaAssistant(
     date: targetDate,
     boat_width_m: targetBoatWidth,
     request_id: clientRequestId,
+    mode: context?.mode || 'chat_query',
   };
 
   try {

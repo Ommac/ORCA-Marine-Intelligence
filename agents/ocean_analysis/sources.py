@@ -262,12 +262,48 @@ def fetch_lightning_data(
     timeout: int = 10,
 ) -> Dict[str, Any]:
     """
-    Fetch convective instability and lightning activity.
+    Fetch convective instability and lightning activity for requested_date.
     
     Primary attempt: MOSDAC GeoServer WFS endpoint.
-    Secondary fallback: Open-Meteo Atmospheric Forecast API with CAPE and weather codes.
-    Clearly marks which source provided the data.
+    Secondary fallback: Open-Meteo Atmospheric Forecast API with CAPE for requested_date.
     """
+    today_utc = datetime.now(timezone.utc).date()
+    target_date = (requested_date or today_utc.strftime("%Y-%m-%d")).strip()
+
+    try:
+        req_date_obj = datetime.strptime(target_date, "%Y-%m-%d").date()
+    except ValueError:
+        return {
+            "available": False,
+            "source": "None",
+            "fallback_used": True,
+            "data": None,
+            "requested_date": requested_date,
+            "data_date": None,
+            "valid_from": None,
+            "valid_to": None,
+            "date_match": False,
+            "reason": f"Invalid requested_date format '{requested_date}'",
+            "timestamp": get_current_iso_timestamp(),
+        }
+
+    days_diff = (req_date_obj - today_utc).days
+
+    if days_diff < 0 or days_diff > 7:
+        return {
+            "available": False,
+            "source": "None",
+            "fallback_used": True,
+            "data": None,
+            "requested_date": target_date,
+            "data_date": None,
+            "valid_from": None,
+            "valid_to": None,
+            "date_match": False,
+            "reason": f"Requested date '{target_date}' is outside available convective forecast horizon (0-7 days)",
+            "timestamp": get_current_iso_timestamp(),
+        }
+
     # 1. Primary: MOSDAC WFS
     mosdac_params = {
         "service": "WFS",
@@ -292,6 +328,11 @@ def fetch_lightning_data(
                     "available": True,
                     "source": "MOSDAC_WFS",
                     "fallback_used": False,
+                    "requested_date": target_date,
+                    "data_date": target_date,
+                    "valid_from": f"{target_date}T00:00:00Z",
+                    "valid_to": f"{target_date}T23:59:59Z",
+                    "date_match": True,
                     "data": {
                         "lightning_features": features,
                         "feature_count": len(features),
@@ -304,22 +345,20 @@ def fetch_lightning_data(
     except requests.exceptions.RequestException:
         pass
 
-    # 2. Secondary fallback: Open-Meteo Atmospheric Forecast API
+    # 2. Secondary fallback: Open-Meteo Atmospheric Forecast API for requested_date
     om_params = {
         "latitude": latitude,
         "longitude": longitude,
-        "current": (
+        "start_date": target_date,
+        "end_date": target_date,
+        "hourly": (
+            "cape,"
             "weather_code,"
+            "precipitation_probability,"
             "precipitation,"
             "rain,"
             "showers"
         ),
-        "hourly": (
-            "cape,"
-            "weather_code,"
-            "precipitation_probability"
-        ),
-        "forecast_days": 1,
         "timezone": "Asia/Kolkata",
     }
 
@@ -333,41 +372,34 @@ def fetch_lightning_data(
 
         if om_response.status_code == 200:
             om_json = om_response.json()
-            current_obj = om_json.get("current", {})
             hourly_obj = om_json.get("hourly", {})
 
-            current_code = current_obj.get("weather_code")
-            precip_mm = current_obj.get("precipitation", 0.0)
-            rain_mm = current_obj.get("rain", 0.0)
-            showers_mm = current_obj.get("showers", 0.0)
+            hourly_codes: List[int] = [int(c) for c in hourly_obj.get("weather_code", []) if c is not None]
+            hourly_cape: List[float] = [float(v) for v in hourly_obj.get("cape", []) if v is not None]
 
-            hourly_cape: List[float] = [
-                float(v) for v in hourly_obj.get("cape", []) if v is not None
-            ]
             max_cape = max(hourly_cape) if hourly_cape else 0.0
             avg_cape = round(sum(hourly_cape) / len(hourly_cape), 2) if hourly_cape else 0.0
 
             # Thunderstorm WMO codes: 95 (slight/moderate), 96 (slight hail), 99 (heavy hail)
-            is_active_thunderstorm = current_code in [95, 96, 99]
-            elevated_convective_risk = is_active_thunderstorm or (max_cape >= 1000.0)
-
-            hourly_codes: List[int] = hourly_obj.get("weather_code", [])
             thunderstorm_forecast_today = any(c in [95, 96, 99] for c in hourly_codes)
+            elevated_convective_risk = thunderstorm_forecast_today or (max_cape >= 1000.0)
 
             return {
                 "available": True,
                 "source": "Open-Meteo Atmospheric API (Convective Fallback)",
                 "fallback_used": True,
+                "requested_date": target_date,
+                "data_date": target_date,
+                "valid_from": f"{target_date}T00:00:00Z",
+                "valid_to": f"{target_date}T23:59:59Z",
+                "date_match": True,
                 "primary_source_status": "MOSDAC WFS unavailable (HTTP 404 or connection failure)",
                 "data": {
-                    "thunderstorm_active": is_active_thunderstorm,
+                    "thunderstorm_active": thunderstorm_forecast_today,
                     "thunderstorm_forecast_today": thunderstorm_forecast_today,
                     "elevated_convective_risk": elevated_convective_risk,
-                    "weather_code": current_code,
-                    "weather_description": describe_weather_code(current_code),
-                    "precipitation_mm": precip_mm,
-                    "rain_mm": rain_mm,
-                    "showers_mm": showers_mm,
+                    "weather_code": max(hourly_codes) if hourly_codes else 0,
+                    "weather_description": describe_weather_code(max(hourly_codes) if hourly_codes else 0),
                     "convective_available_potential_energy_j_kg": {
                         "max_cape": max_cape,
                         "average_cape": avg_cape,
@@ -375,7 +407,7 @@ def fetch_lightning_data(
                     },
                 },
                 "reason": None,
-                "timestamp": current_obj.get("time") or get_current_iso_timestamp(),
+                "timestamp": f"{target_date}T12:00:00Z",
             }
 
         return {
@@ -383,6 +415,11 @@ def fetch_lightning_data(
             "source": "None",
             "fallback_used": True,
             "data": None,
+            "requested_date": target_date,
+            "data_date": None,
+            "valid_from": None,
+            "valid_to": None,
+            "date_match": False,
             "reason": (
                 f"Both MOSDAC WFS and Open-Meteo Atmospheric API failed "
                 f"(Open-Meteo HTTP {om_response.status_code})"
@@ -396,6 +433,11 @@ def fetch_lightning_data(
             "source": "None",
             "fallback_used": True,
             "data": None,
+            "requested_date": target_date,
+            "data_date": None,
+            "valid_from": None,
+            "valid_to": None,
+            "date_match": False,
             "reason": f"Both MOSDAC WFS and Open-Meteo fallback failed: {exc}",
             "timestamp": get_current_iso_timestamp(),
         }

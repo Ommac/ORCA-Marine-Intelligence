@@ -450,11 +450,17 @@ def calculate_risk(
         return hard_override_resp
 
     # -----------------------------------------------------------------------
-    # STEP 2: Extract Environmental Values
+    # STEP 2: Extract Environmental Values (Only if date_match is True)
     # -----------------------------------------------------------------------
+    weather_date_valid = (
+        isinstance(marine_weather_result, dict)
+        and marine_weather_result.get("status") == "success"
+        and marine_weather_result.get("date_match", True) is not False
+    )
+
     marine_data = {}
     weather_data = {}
-    if isinstance(marine_weather_result, dict):
+    if weather_date_valid:
         raw_marine = marine_weather_result.get("marine")
         if isinstance(raw_marine, dict):
             marine_data = raw_marine

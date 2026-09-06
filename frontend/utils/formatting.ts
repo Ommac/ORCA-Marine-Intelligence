@@ -151,3 +151,88 @@ export function getSeverityTheme(severity: SeverityLevel | string) {
       };
   }
 }
+
+// ===========================================================================
+// Alert System Formatting Helpers
+// ===========================================================================
+
+import { AlertSeverityLevel } from '../types/orca';
+
+export function getAlertSeverityTheme(severity: AlertSeverityLevel) {
+  switch (severity) {
+    case 'CRITICAL':
+      return {
+        label: 'CRITICAL',
+        textColor: '#FFFFFF',
+        bgColor: '#991B1B',
+        borderColor: '#B91C1C',
+        accentColor: '#DC2626',
+        pillBg: '#FEE2E2',
+        pillText: '#7F1D1D',
+      };
+    case 'HIGH':
+      return {
+        label: 'HIGH',
+        textColor: COLORS.dangerText,
+        bgColor: COLORS.dangerBg,
+        borderColor: COLORS.dangerBorder,
+        accentColor: COLORS.danger,
+        pillBg: COLORS.dangerBg,
+        pillText: COLORS.dangerText,
+      };
+    case 'CAUTION':
+      return {
+        label: 'CAUTION',
+        textColor: COLORS.cautionText,
+        bgColor: COLORS.cautionBg,
+        borderColor: COLORS.cautionBorder,
+        accentColor: COLORS.caution,
+        pillBg: COLORS.cautionBg,
+        pillText: COLORS.cautionText,
+      };
+    case 'INFORMATION':
+      return {
+        label: 'INFO',
+        textColor: COLORS.oceanBlueDark,
+        bgColor: COLORS.skyBlue,
+        borderColor: COLORS.skyBlueBorder,
+        accentColor: COLORS.oceanBlue,
+        pillBg: COLORS.skyBlue,
+        pillText: COLORS.oceanBlueDark,
+      };
+    case 'SAFE':
+    default:
+      return {
+        label: 'SAFE',
+        textColor: COLORS.safeText,
+        bgColor: COLORS.safeBg,
+        borderColor: COLORS.safeBorder,
+        accentColor: COLORS.safe,
+        pillBg: COLORS.safeBg,
+        pillText: COLORS.safeText,
+      };
+  }
+}
+
+export function formatBoatCategory(widthM: number): string {
+  if (widthM < 4.0) return 'Small Canoe / Dinghy (Under 4 m)';
+  if (widthM < 6.0) return 'FRP / Motorized Craft (4–6 m)';
+  if (widthM < 7.0) return 'Medium Trawler / Gillnetter (6–7 m)';
+  return 'Large Deep-Sea Vessel (7 m+)';
+}
+
+export function formatAlertTime(isoString?: string): string {
+  if (!isoString) return '';
+  try {
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return isoString;
+    const hours = date.getHours();
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const displayHour = hours % 12 || 12;
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${date.getDate()} ${monthNames[date.getMonth()]} ${displayHour}:${minutes} ${ampm}`;
+  } catch {
+    return isoString;
+  }
+}
