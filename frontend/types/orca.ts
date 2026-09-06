@@ -31,7 +31,7 @@ export interface PFZNearest {
 }
 
 export interface PFZGeometry {
-  type: "MultiLineString" | "LineString" | "Polygon" | "MultiPolygon" | string;
+  type: "Point" | "MultiPoint" | "MultiLineString" | "LineString" | "Polygon" | "MultiPolygon" | string;
   coordinates: any;
 }
 
@@ -39,6 +39,7 @@ export interface PFZData {
   available: boolean;
   nearest?: PFZNearest;
   geometry?: PFZGeometry;
+  metadata?: Record<string, unknown>;
   message?: string;
 }
 

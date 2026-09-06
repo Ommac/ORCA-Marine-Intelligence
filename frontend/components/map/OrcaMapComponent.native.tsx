@@ -1,292 +1,122 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Plus, Minus, Navigation, Fish, Anchor } from 'lucide-react-native';
+import MapView, { Callout, Circle, Marker, Polygon, Polyline, Region } from 'react-native-maps';
+import { Minus, Navigation, Plus } from 'lucide-react-native';
 import { OrcaResponse, PFZNearest } from '../../types/orca';
-import {
-  createDistanceLine,
-  pfzToGeoJSON,
-  computeBoundingBox,
-} from '../../utils/mapAdapters';
-import { SATELLITE_MAP_STYLE, ARCGIS_SATELLITE_TILE_URL } from '../../constants/map';
+import { NormalizedPFZFeature, PFZLatLng, calculatePFZBounds, normalizePFZFeatures } from '../../utils/pfzGeometry';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
-
-let MapLibreGL: any = null;
-let isNativeModuleAvailable = false;
-
-try {
-  MapLibreGL = require('@maplibre/maplibre-react-native');
-  if (MapLibreGL && MapLibreGL.MapView) {
-    if (MapLibreGL.setAccessToken) {
-      MapLibreGL.setAccessToken(null);
-    }
-    isNativeModuleAvailable = true;
-  }
-} catch (e) {
-  isNativeModuleAvailable = false;
-}
 
 export interface MapViewProps {
   response: OrcaResponse;
-  activeLayers?: {
-    pfz: boolean;
-    myLocation: boolean;
-    distance: boolean;
-  };
+  activeLayers?: { pfz: boolean; myLocation: boolean; distance: boolean };
   onSelectPFZ?: (nearest?: PFZNearest) => void;
   onViewDetails?: () => void;
 }
 
-export const OrcaMapComponent: React.FC<MapViewProps> = ({
-  response,
-  activeLayers = { pfz: true, myLocation: true, distance: true },
-  onSelectPFZ,
-}) => {
-  const cameraRef = useRef<any>(null);
-  const [zoomLevel, setZoomLevel] = useState(9);
-  const [nativeError, setNativeError] = useState<string | null>(null);
+function PFZCallout({ properties }: { properties: Record<string, unknown> }) {
+  const findValue = (...keys: string[]) => keys.map((key) => properties[key]).find((value) => value !== undefined && value !== null && value !== '');
+  const entries = [
+    ['Sector', findValue('SECTORNAME', 'sectorname', 'category')],
+    ['Year', findValue('Year', 'data_year')],
+    ['Julian Day', findValue('Julian_day', 'julian_day')],
+    ['Length', findValue('Length', 'length')],
+    ['UID', findValue('UID', 'uid')],
+  ].filter((entry): entry is [string, unknown] => entry[1] !== undefined);
+  return <Callout><Text style={styles.calloutTitle}>PFZ Advisory</Text>{entries.map(([label, value]) => <Text key={label}>{label}: {String(value)}</Text>)}</Callout>;
+}
 
-  const fisherLat = response.request?.latitude ?? 19.72;
-  const fisherLon = response.request?.longitude ?? 72.70;
-  const nearest = response.pfz.nearest;
-  const pfz = response.pfz;
+function DirectionArrows({ lines }: { lines: PFZLatLng[][] }) {
+  const arrows = lines.flatMap((line, lineIndex) => {
+    const step = Math.max(1, Math.ceil((line.length - 1) / 8));
+    return line.slice(0, -1).reduce<{ position: PFZLatLng; rotation: number; key: string }[]>((items, point, index) => {
+      if (index % step !== 0) return items;
+      const next = line[index + 1];
+      items.push({ position: [(point[0] + next[0]) / 2, (point[1] + next[1]) / 2], rotation: Math.atan2(next[1] - point[1], next[0] - point[0]) * (180 / Math.PI), key: `native-arrow-${lineIndex}-${index}` });
+      return items;
+    }, []);
+  });
+  return <>{arrows.map((arrow) => <Marker key={arrow.key} coordinate={{ latitude: arrow.position[0], longitude: arrow.position[1] }} rotation={arrow.rotation} flat anchor={{ x: 0.5, y: 0.5 }}><Text style={styles.arrow}>➤</Text></Marker>)}</>;
+}
 
-  const distanceLineGeoJSON = createDistanceLine(fisherLat, fisherLon, nearest);
-  const pfzMultiLineGeoJSON = pfzToGeoJSON(pfz);
-  const bbox = computeBoundingBox(fisherLat, fisherLon, nearest, pfz);
-
-  const handleRecenter = () => {
-    if (cameraRef.current) {
-      cameraRef.current.fitBounds(
-        [bbox[2], bbox[3]], // ne
-        [bbox[0], bbox[1]], // sw
-        40,
-        600
-      );
-    }
-  };
-
-  const handleZoomIn = () => {
-    setZoomLevel((prev) => Math.min(prev + 1, 16));
-  };
-
-  const handleZoomOut = () => {
-    setZoomLevel((prev) => Math.max(prev - 1, 4));
-  };
-
-  if (!isNativeModuleAvailable || !MapLibreGL || !MapLibreGL.MapView) {
-    return (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorTitle}>Real Satellite Map</Text>
-        <Text style={styles.errorSubtitle}>
-          {nativeError || 'Native MapLibre SDK is active for development/standalone builds.'}
-        </Text>
-      </View>
-    );
+function PFZFeatureLayer({ feature }: { feature: NormalizedPFZFeature }) {
+  const { geometry, properties } = feature;
+  if (geometry.type === 'LineString') {
+    const coordinates = geometry.coordinates.map(([latitude, longitude]) => ({ latitude, longitude }));
+    return <><Polyline coordinates={coordinates} strokeColor="#10B981" strokeWidth={4} tappable /><Marker coordinate={coordinates[0]}><PFZCallout properties={properties} /></Marker><DirectionArrows lines={[geometry.coordinates]} /></>;
   }
+  if (geometry.type === 'MultiLineString') {
+    return <>{geometry.coordinates.map((line, index) => { const coordinates = line.map(([latitude, longitude]) => ({ latitude, longitude })); return <React.Fragment key={`${feature.id}-line-${index}`}><Polyline coordinates={coordinates} strokeColor="#10B981" strokeWidth={4} tappable /><Marker coordinate={coordinates[0]}><PFZCallout properties={properties} /></Marker><DirectionArrows lines={[line]} /></React.Fragment>; })}</>;
+  }
+  if (geometry.type === 'Polygon') {
+    const coordinates = geometry.coordinates[0].map(([latitude, longitude]) => ({ latitude, longitude }));
+    return <><Polygon coordinates={coordinates} strokeColor="#10B981" fillColor="rgba(16,185,129,0.2)" strokeWidth={3} tappable /><Marker coordinate={coordinates[0]}><PFZCallout properties={properties} /></Marker></>;
+  }
+  if (geometry.type === 'MultiPolygon') {
+    return <>{geometry.coordinates.map((polygon, index) => { const coordinates = polygon[0].map(([latitude, longitude]) => ({ latitude, longitude })); return <React.Fragment key={`${feature.id}-polygon-${index}`}><Polygon coordinates={coordinates} strokeColor="#10B981" fillColor="rgba(16,185,129,0.2)" strokeWidth={3} tappable /><Marker coordinate={coordinates[0]}><PFZCallout properties={properties} /></Marker></React.Fragment>; })}</>;
+  }
+  if (geometry.type === 'Point') return <Marker coordinate={{ latitude: geometry.coordinates[0], longitude: geometry.coordinates[1] }}><PFZCallout properties={properties} /></Marker>;
+  return <>{geometry.coordinates.map((point, index) => <Marker key={`${feature.id}-point-${index}`} coordinate={{ latitude: point[0], longitude: point[1] }}><PFZCallout properties={properties} /></Marker>)}</>;
+}
 
-  return (
-    <View style={styles.container}>
-      <MapLibreGL.MapView
-        style={styles.fullMap}
-        styleJSON={JSON.stringify(SATELLITE_MAP_STYLE)}
-        logoEnabled={false}
-        attributionEnabled={true}
-        attributionPosition={{ bottom: 8, right: 8 }}
-        onDidFailLoadingMap={(err: any) => {
-          console.warn('[ORCA Native Map] Loading status:', err);
-          if (err && err.message) {
-            setNativeError(err.message);
-          }
-        }}
-      >
-        <MapLibreGL.Camera
-          ref={cameraRef}
-          defaultSettings={{
-            centerCoordinate: [fisherLon, fisherLat],
-            zoomLevel: zoomLevel,
-            bounds: {
-              ne: [bbox[2], bbox[3]],
-              sw: [bbox[0], bbox[1]],
-              paddingBottom: 40,
-              paddingLeft: 40,
-              paddingRight: 40,
-              paddingTop: 40,
-            },
-          }}
-        />
+function featureCoordinates(features: NormalizedPFZFeature[]): PFZLatLng[] {
+  const positions: PFZLatLng[] = [];
+  features.forEach(({ geometry }) => {
+    const collect = (value: unknown): void => {
+      if (Array.isArray(value) && typeof value[0] === 'number') positions.push(value as PFZLatLng);
+      else if (Array.isArray(value)) value.forEach(collect);
+    };
+    collect(geometry.coordinates);
+  });
+  return positions;
+}
 
-        {/* ArcGIS Satellite Imagery Raster Source & Layer */}
-        <MapLibreGL.RasterSource
-          id="arcgis-satellite-source"
-          tileUrlTemplates={[ARCGIS_SATELLITE_TILE_URL]}
-          tileSize={256}
-          maxZoom={19}
-        >
-          <MapLibreGL.RasterLayer
-            id="arcgis-satellite-layer-native"
-            sourceID="arcgis-satellite-source"
-            style={{ rasterOpacity: 1.0 }}
-          />
-        </MapLibreGL.RasterSource>
+export const OrcaMapComponent: React.FC<MapViewProps> = ({ response, activeLayers = { pfz: true, myLocation: true, distance: true }, onSelectPFZ }) => {
+  const mapRef = useRef<MapView | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+  const fisherLat = response.request?.latitude ?? 0;
+  const fisherLon = response.request?.longitude ?? 0;
+  const hasLivePFZ = response.pfz.metadata !== undefined;
+  const features = useMemo(() => hasLivePFZ ? normalizePFZFeatures(response.pfz.geometry, response.pfz.metadata) : [], [hasLivePFZ, response.pfz.geometry, response.pfz.metadata]);
+  const bounds = useMemo(() => calculatePFZBounds(features), [features]);
+  const center: Region = { latitude: fisherLat, longitude: fisherLon, latitudeDelta: 4, longitudeDelta: 4 };
 
-        {/* Distance Line */}
-        {activeLayers.distance && distanceLineGeoJSON && (
-          <MapLibreGL.ShapeSource id="nativeDistanceSource" shape={distanceLineGeoJSON}>
-            <MapLibreGL.LineLayer
-              id="nativeDistanceLayer"
-              style={{
-                lineColor: '#38BDF8',
-                lineWidth: 3.5,
-                lineDasharray: [2, 2],
-                lineOpacity: 0.95,
-              }}
-            />
-          </MapLibreGL.ShapeSource>
-        )}
+  useEffect(() => {
+    const coordinates = featureCoordinates(features);
+    if (mapRef.current && coordinates.length) mapRef.current.fitToCoordinates(coordinates.map(([latitude, longitude]) => ({ latitude, longitude })), { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: true });
+  }, [features, bounds]);
 
-        {/* PFZ Geometry Layer */}
-        {activeLayers.pfz && pfzMultiLineGeoJSON && (
-          <MapLibreGL.ShapeSource id="nativePfzSource" shape={pfzMultiLineGeoJSON}>
-            <MapLibreGL.LineLayer
-              id="nativePfzHalo"
-              style={{
-                lineColor: '#064E3B',
-                lineWidth: 7,
-                lineOpacity: 0.8,
-              }}
-            />
-            <MapLibreGL.LineLayer
-              id="nativePfzLayer"
-              style={{
-                lineColor: '#10B981',
-                lineWidth: 4.5,
-                lineOpacity: 1.0,
-              }}
-            />
-          </MapLibreGL.ShapeSource>
-        )}
+  const recenter = () => {
+    const coordinates = featureCoordinates(features);
+    if (mapRef.current && coordinates.length) mapRef.current.fitToCoordinates(coordinates.map(([latitude, longitude]) => ({ latitude, longitude })), { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: true });
+    else mapRef.current?.animateToRegion(center, 600);
+  };
 
-        {/* Fisherman Location Marker */}
-        {activeLayers.myLocation && (
-          <MapLibreGL.PointAnnotation
-            id="nativeFisherMarker"
-            coordinate={[fisherLon, fisherLat]}
-            title="Fishing Location"
-          >
-            <View style={styles.fisherPin}>
-              <Anchor size={16} color="#FFFFFF" strokeWidth={2.5} />
-            </View>
-          </MapLibreGL.PointAnnotation>
-        )}
-
-        {/* Nearest PFZ Spot Marker */}
-        {activeLayers.pfz && nearest && !isNaN(nearest.latitude) && !isNaN(nearest.longitude) && (
-          <MapLibreGL.PointAnnotation
-            id="nativePFZMarker"
-            coordinate={[nearest.longitude, nearest.latitude]}
-            title="Nearest PFZ"
-            onSelected={() => {
-              if (onSelectPFZ) onSelectPFZ(nearest);
-            }}
-          >
-            <View style={styles.pfzPin}>
-              <Fish size={18} color="#FFFFFF" strokeWidth={2.5} />
-            </View>
-          </MapLibreGL.PointAnnotation>
-        )}
-      </MapLibreGL.MapView>
-
-      {/* Map Touch Controls */}
-      <View style={styles.controlsCol}>
-        <TouchableOpacity style={styles.controlBtn} onPress={handleZoomIn} accessibilityLabel="Zoom In">
-          <Plus size={20} color={COLORS.textPrimary} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.controlBtn} onPress={handleZoomOut} accessibilityLabel="Zoom Out">
-          <Minus size={20} color={COLORS.textPrimary} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.controlBtn} onPress={handleRecenter} accessibilityLabel="Recenter Map">
-          <Navigation size={18} color={COLORS.oceanBlue} />
-        </TouchableOpacity>
-      </View>
+  return <View style={styles.container}>
+    <MapView ref={mapRef} style={styles.fullMap} mapType="satellite" initialRegion={center} onMapReady={() => setMapReady(true)}>
+      {activeLayers.pfz && features.map((feature) => <PFZFeatureLayer key={feature.id} feature={feature} />)}
+      {activeLayers.myLocation && <Circle center={{ latitude: fisherLat, longitude: fisherLon }} radius={500} strokeColor="#38BDF8" fillColor="rgba(10,37,64,0.7)" />}
+      {activeLayers.myLocation && <Marker coordinate={{ latitude: fisherLat, longitude: fisherLon }} title="Fishing Location" />}
+      {activeLayers.pfz && response.pfz.nearest && <Marker coordinate={{ latitude: response.pfz.nearest.latitude, longitude: response.pfz.nearest.longitude }} title="Nearest PFZ" onPress={() => onSelectPFZ?.(response.pfz.nearest)} />}
+    </MapView>
+    {!mapReady && <View style={styles.loadingOverlay}><Text style={styles.loadingText}>Loading map...</Text></View>}
+    {mapReady && !features.length && <View style={styles.emptyOverlay}><Text style={styles.emptyText}>{response.pfz.message ? 'Unable to load PFZ data' : hasLivePFZ ? 'No PFZ data available' : 'Loading PFZ data...'}</Text></View>}
+    <View style={styles.controlsCol}>
+      <TouchableOpacity style={styles.controlBtn} onPress={() => mapRef.current?.getCamera().then((camera) => mapRef.current?.animateCamera({ ...camera, zoom: (camera.zoom || 9) + 1 }))} accessibilityLabel="Zoom In"><Plus size={20} color={COLORS.textPrimary} /></TouchableOpacity>
+      <TouchableOpacity style={styles.controlBtn} onPress={() => mapRef.current?.getCamera().then((camera) => mapRef.current?.animateCamera({ ...camera, zoom: Math.max((camera.zoom || 9) - 1, 1) }))} accessibilityLabel="Zoom Out"><Minus size={20} color={COLORS.textPrimary} /></TouchableOpacity>
+      <TouchableOpacity style={styles.controlBtn} onPress={recenter} accessibilityLabel="Recenter Map"><Navigation size={18} color={COLORS.oceanBlue} /></TouchableOpacity>
     </View>
-  );
+  </View>;
 };
 
 const styles = StyleSheet.create({
-  container: {
-    height: 480,
-    width: '100%',
-    borderRadius: RADIUS.xl,
-    overflow: 'hidden',
-    position: 'relative',
-    backgroundColor: '#0F172A',
-    borderWidth: 1.5,
-    borderColor: COLORS.skyBlueBorder,
-    ...SHADOWS.md,
-  },
-  fullMap: {
-    flex: 1,
-  },
-  fisherPin: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#0A2540',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2.5,
-    borderColor: '#38BDF8',
-    ...SHADOWS.md,
-  },
-  pfzPin: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#15803D',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2.5,
-    borderColor: '#86EFAC',
-    ...SHADOWS.md,
-  },
-  controlsCol: {
-    position: 'absolute',
-    top: 14,
-    left: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    borderRadius: RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    zIndex: 10,
-    ...SHADOWS.md,
-  },
-  controlBtn: {
-    width: 42,
-    height: 42,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.borderLight,
-  },
-  errorContainer: {
-    height: 480,
-    width: '100%',
-    backgroundColor: COLORS.surfaceSubtle,
-    borderRadius: RADIUS.xl,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: SPACING.xl,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  errorTitle: {
-    ...TYPOGRAPHY.h2,
-    color: COLORS.textPrimary,
-    marginBottom: 6,
-  },
-  errorSubtitle: {
-    ...TYPOGRAPHY.bodyMedium,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-  },
+  container: { height: 480, width: '100%', borderRadius: RADIUS.xl, overflow: 'hidden', position: 'relative', backgroundColor: '#0F172A', borderWidth: 1.5, borderColor: COLORS.skyBlueBorder, ...SHADOWS.md },
+  fullMap: { flex: 1 },
+  arrow: { color: '#FDE047', fontSize: 22, textShadowColor: '#064E3B', textShadowRadius: 3 },
+  calloutTitle: { fontWeight: '700', marginBottom: 4 },
+  loadingOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(15, 23, 42, 0.85)', justifyContent: 'center', alignItems: 'center', zIndex: 20 },
+  loadingText: { ...TYPOGRAPHY.bodySmall, color: '#F8FAFC', fontWeight: '700' },
+  emptyOverlay: { position: 'absolute', top: 16, right: 16, backgroundColor: 'rgba(15, 23, 42, 0.86)', padding: SPACING.sm, borderRadius: RADIUS.md, zIndex: 5 },
+  emptyText: { ...TYPOGRAPHY.caption, color: '#F8FAFC', fontWeight: '700' },
+  controlsCol: { position: 'absolute', top: 14, left: 14, backgroundColor: 'rgba(255, 255, 255, 0.95)', borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, zIndex: 10, ...SHADOWS.md },
+  controlBtn: { width: 42, height: 42, justifyContent: 'center', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: COLORS.borderLight },
 });

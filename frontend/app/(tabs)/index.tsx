@@ -61,7 +61,7 @@ export default function HomeScreen() {
         longitude: selectedLocation.longitude,
         date: selectedDate,
         boat_width_m: selectedBoatWidth,
-        query: `Check conditions for ${selectedLocation.name}`,
+        query: `Is it safe to go fishing near ${selectedLocation.name}?`,
       });
 
       // Navigate to detailed Assessment Screen

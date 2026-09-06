@@ -63,7 +63,15 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
   const pfzRaw = raw?.pfz || {};
   const isPfzAvailable = pfzRaw.status === 'success';
   const pfzDetails = pfzRaw.pfz || {};
-  const pfzNearest = pfzDetails.nearest || undefined;
+  const pfzNearest = pfzDetails.nearest || pfzDetails.nearest_point || undefined;
+  const pfzMetadata = {
+    category: pfzDetails.category,
+    uid: pfzDetails.uid,
+    sno: pfzDetails.sno,
+    data_year: pfzDetails.data_year,
+    julian_day: pfzDetails.julian_day,
+    valid_until: pfzDetails.valid_until,
+  };
 
   // Marine Weather Mapping
   const marineWeatherRaw = raw?.marine_weather || {};
@@ -108,6 +116,7 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
       available: isPfzAvailable,
       nearest: pfzNearest,
       geometry: pfzDetails.geometry,
+      metadata: pfzMetadata,
       message: pfzRaw.error || pfzRaw.reason || (isPfzAvailable ? undefined : 'PFZ data feed is currently unavailable.'),
     },
     marine: {
