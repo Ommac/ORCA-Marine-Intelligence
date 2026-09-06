@@ -19,7 +19,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, TypedDict
 
 # Ensure workspace root is in sys.path
@@ -162,6 +162,32 @@ def contains_any(text: str, keywords: List[str]) -> bool:
     return any(keyword in text for keyword in keywords)
 
 
+def resolve_effective_date(query: str, reference_date: str) -> str:
+    """
+    Resolve relative date terms in the query against the API request date.
+
+    The request date is authoritative (not server clock). Examples when
+    reference_date = 2026-09-06:
+      today -> 2026-09-06
+      tomorrow -> 2026-09-07
+      day after tomorrow -> 2026-09-08
+      yesterday -> 2026-09-05
+    """
+    q = (query or "").strip().lower()
+    ref = datetime.strptime(reference_date, "%Y-%m-%d").date()
+
+    if "day after tomorrow" in q:
+        return (ref + timedelta(days=2)).strftime("%Y-%m-%d")
+    if "tomorrow" in q:
+        return (ref + timedelta(days=1)).strftime("%Y-%m-%d")
+    if "yesterday" in q:
+        return (ref - timedelta(days=1)).strftime("%Y-%m-%d")
+    if "today" in q:
+        return ref.strftime("%Y-%m-%d")
+
+    return reference_date
+
+
 def extract_boat_width(query: str, default: float = 5.0) -> float:
     """Extract boat width in meters from natural language if specified."""
     match = re.search(r"(\d+(?:\.\d+)?)\s*(?:m|meter|meters|metre|metres)\s*(?:boat|vessel|craft|dinghy)?", query, re.IGNORECASE)
@@ -273,7 +299,10 @@ def classify_query(query: str) -> Tuple[str, List[str], bool]:
     # 4. SAFETY ASSESSMENT (All 4 specialist agents + Risk Engine)
     safety_keywords = [
         "is it safe",
+        "is it okay to go",
+        "okay to go fishing",
         "safe to go",
+        "safe to fish",
         "safe for fishing",
         "safe for sailing",
         "safe to sail",
@@ -286,12 +315,22 @@ def classify_query(query: str) -> Tuple[str, List[str], bool]:
         "safest trajectory",
         "should i go",
         "should we go",
+        "should i sail",
+        "should we sail",
+        "can i go tomorrow",
+        "can i go today",
+        "can i go yesterday",
+        "can we go tomorrow",
+        "can we go today",
         "can i go fishing",
         "can we go fishing",
+        "can i go out",
+        "can we go out",
         "can i sail",
         "can we sail",
         "can my boat go out",
         "can i go with my",
+        "safely go out to sea",
         "should i take my boat",
         "is it dangerous",
         "danger today",
@@ -305,6 +344,7 @@ def classify_query(query: str) -> Tuple[str, List[str], bool]:
         "risk level",
         "weather risk",
         "safe for my boat",
+        "safe to take my boat out",
     ]
     if contains_any(q, safety_keywords):
         return "safety_assessment", ALL_SPECIALISTS.copy(), True
@@ -432,17 +472,22 @@ def supervisor_node(state: ORCAState) -> Dict[str, Any]:
     if boat_width is None:
         boat_width = extract_boat_width(query, default=5.0)
 
+    reference_date = state.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    effective_date = resolve_effective_date(query, reference_date)
+
     logger.info("\n[SUPERVISOR]")
     logger.info("Query: %s", query)
     logger.info("Intent: %s", intent)
     logger.info("Selected agents: %s", selected_agents)
     logger.info("Risk required: %s", risk_required)
+    logger.info("Reference date: %s -> Effective date: %s", reference_date, effective_date)
 
     return {
         "intent": intent,
         "selected_agents": selected_agents,
         "risk_required": risk_required,
         "boat_width_m": boat_width,
+        "date": effective_date,
     }
 
 
