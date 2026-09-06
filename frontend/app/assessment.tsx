@@ -28,6 +28,7 @@ import {
   getCurrentAssessment,
   subscribeToAssessment,
 } from '../services/api';
+import { getTodayDateISO } from '../services/tripStore';
 import { OrcaResponse } from '../types/orca';
 import { formatDateToFisherman } from '../utils/formatting';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../constants/theme';
@@ -93,7 +94,7 @@ export default function AssessmentScreen() {
           <View style={styles.tripChip}>
             <Calendar size={14} color={COLORS.oceanBlue} />
             <Text style={styles.tripChipText}>
-              {formatDateToFisherman(data.request?.date || '2026-09-03')}
+              {formatDateToFisherman(data.request?.date || getTodayDateISO())}
             </Text>
           </View>
 

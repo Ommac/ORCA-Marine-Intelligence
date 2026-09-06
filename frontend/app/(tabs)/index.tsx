@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -24,16 +24,34 @@ import { CheckConditionsButton } from '../../components/CheckConditionsButton';
 import { LoadingState } from '../../components/LoadingState';
 import { PRESET_LOCATIONS, BOAT_SIZES } from '../../constants/locations';
 import { getOrcaAssessment } from '../../services/api';
+import {
+  getActiveTrip,
+  setActiveLocation,
+  setActiveDate,
+  setActiveBoatWidth,
+  subscribeToTrip,
+  getTodayDateISO,
+} from '../../services/tripStore';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
 
 export default function HomeScreen() {
   const router = useRouter();
+  const initialTrip = getActiveTrip();
 
-  // Primary Trip State
-  const [selectedLocation, setSelectedLocation] = useState(PRESET_LOCATIONS[0]); // Default to Palghar
-  const [selectedDate, setSelectedDate] = useState('2026-09-03');
-  const [selectedBoatWidth, setSelectedBoatWidth] = useState(5.0); // Default to 4–6m (5.0m)
+  // Primary Trip State synced with Centralized Trip Store
+  const [selectedLocation, setSelectedLocation] = useState(initialTrip.location);
+  const [selectedDate, setSelectedDate] = useState(initialTrip.date || getTodayDateISO());
+  const [selectedBoatWidth, setSelectedBoatWidth] = useState(initialTrip.boatWidthM || 5.0);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToTrip((trip) => {
+      setSelectedLocation(trip.location);
+      setSelectedDate(trip.date);
+      setSelectedBoatWidth(trip.boatWidthM);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const handleCheckConditions = async () => {
     setLoading(true);
@@ -84,31 +102,39 @@ export default function HomeScreen() {
 
         {/* Form Container Card */}
         <View style={styles.formCard}>
-          {/* 1. Location Selection */}
+          {/* 1. Location Selection - Immediately updates shared & persistent trip context */}
           <LocationSelector
             selectedLocation={selectedLocation}
-            onSelectLocation={(loc) =>
-              setSelectedLocation({
+            onSelectLocation={(loc) => {
+              const newLoc = {
                 id: (loc as any).id || 'custom',
                 name: loc.name,
                 state: loc.state || 'Coastal Zone',
                 district: (loc as any).district,
                 latitude: loc.latitude,
                 longitude: loc.longitude,
-              })
-            }
+              };
+              setSelectedLocation(newLoc);
+              setActiveLocation(newLoc);
+            }}
           />
 
-          {/* 2. Date Selection */}
+          {/* 2. Date Selection - Immediately updates shared & persistent trip context */}
           <DateSelector
             selectedDate={selectedDate}
-            onSelectDate={setSelectedDate}
+            onSelectDate={(dateISO) => {
+              setSelectedDate(dateISO);
+              setActiveDate(dateISO);
+            }}
           />
 
-          {/* 3. Boat Size Selection */}
+          {/* 3. Boat Size Selection - Immediately updates shared & persistent trip context */}
           <BoatSizeSelector
             selectedBoatWidth={selectedBoatWidth}
-            onSelectBoat={(opt) => setSelectedBoatWidth(opt.boat_width_m)}
+            onSelectBoat={(opt) => {
+              setSelectedBoatWidth(opt.boat_width_m);
+              setActiveBoatWidth(opt.boat_width_m);
+            }}
           />
 
           {/* Primary CTA */}

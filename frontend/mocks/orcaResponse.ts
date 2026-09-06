@@ -1,4 +1,5 @@
 import { OrcaResponse, OrcaRequest } from '../types/orca';
+import { getTodayDateISO } from '../services/tripStore';
 
 /**
  * Realistic Mock Response adhering strictly to the OrcaResponse data contract.
@@ -8,7 +9,7 @@ export const MOCK_PALGHAR_RESPONSE: OrcaResponse = {
   request: {
     latitude: 19.72,
     longitude: 72.70,
-    date: '2026-09-03',
+    date: getTodayDateISO(),
     boat_width_m: 5.0,
     query: 'Check fishing conditions near Palghar',
   },

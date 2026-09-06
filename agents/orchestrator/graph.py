@@ -122,6 +122,7 @@ ALL_SPECIALISTS = [
 
 class ORCAState(TypedDict, total=False):
     # User input
+    request_id: Optional[str]
     query: str
     latitude: float
     longitude: float
@@ -203,258 +204,136 @@ def extract_boat_width(query: str, default: float = 5.0) -> float:
 
 def classify_query(query: str) -> Tuple[str, List[str], bool]:
     """
-    Classify user query deterministically into one of the ORCA intents:
-    - general
-    - emergency
-    - safety_assessment
-    - fishing_advice
-    - pfz_query
-    - marine_weather_query
-    - svas_query
-    - ocean_analysis_query
+    Deterministically classify a query and select every specialist required.
 
-    Returns: (intent, selected_agents, risk_required)
+    Important rules:
+    1. Emergency keywords trigger immediate emergency protocol.
+    2. Any query asking about safety, hazards to avoid, danger, or navigation risk
+       runs a full safety assessment using all specialists.
+    3. Specific specialist queries route directly to the requested domains.
+    4. General / knowledge queries bypass specialist APIs.
     """
     q = (query or "").strip().lower()
 
     if not q:
         return "general", [], False
 
-    # 1. EMERGENCY
     emergency_keywords = [
-        "boat is in danger",
-        "stranded at sea",
-        "emergency",
-        "mayday",
-        "sos",
-        "boat sinking",
-        "capsizing",
-        "man overboard",
-        "life threatening",
-        "engine failed at sea",
-        "distress",
-        "save us",
+        "boat is in danger", "stranded at sea", "emergency", "mayday", "sos",
+        "boat sinking", "capsizing", "man overboard", "life threatening",
+        "engine failed at sea", "distress", "save us",
     ]
     if contains_any(q, emergency_keywords):
         return "emergency", [], False
 
-    # 2. GENERAL GREETING / BOT IDENTITY / DOMAIN KNOWLEDGE (No live data needed)
     general_knowledge_exact = [
-        "hello",
-        "hi",
-        "hey",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "who are you",
-        "what are you",
-        "what is orca",
-        "what can you do",
-        "how can you help",
-        "help",
-        "what is fishing",
-        "what is a pfz",
-        "what is pfz",
-        "what is a potential fishing zone",
-        "what is potential fishing zone",
-        "what is svas",
-        "what is swell",
-        "explain pfz",
-        "explain svas",
+        "hello", "hi", "hey", "good morning", "good afternoon", "good evening",
+        "who are you", "what are you", "what is orca", "what can you do",
+        "how can you help", "help", "what is fishing", "what is a pfz",
+        "what is pfz", "what is a potential fishing zone",
+        "what is potential fishing zone", "what is svas", "what is swell",
+        "explain pfz", "explain svas",
     ]
-    if q in general_knowledge_exact or (
-        q.startswith("what is ") and not contains_any(q, [
-            "today", "now", "current", "near me", "nearest", "weather", "wave", "wind",
-            "temp", "restriction", "restrictions", "safe", "safest", "route", "sea", "sea-state",
-            "hazard", "hazards", "productivity", "decline", "sailing", "navigation"
-        ])
-    ):
+    if q in general_knowledge_exact:
         return "general", [], False
 
-    # 3. FISHING ADVICE (Where to fish / recommendation; PFZ + Marine Weather; no risk calculation)
-    fishing_advice_keywords = [
-        "where should i go fishing",
-        "where should we go fishing",
-        "where to go fishing",
-        "where should i fish",
-        "where should we fish",
-        "which fishing area is better",
-        "which fishing area",
-        "recommend fishing spot",
-        "recommend fishing area",
-        "where to go fishing today",
-        "where should i go to fish",
-        "best place to fish today",
-        "suggest fishing area",
-        "which zone is better",
-        "fishing route",
-        "best route to fish",
+    # Detect safety and hazard avoidance intent before ordinary specialist routing.
+    # Catches questions about safety, hazards to avoid, geofencing restrictions, danger, etc.
+    safety_and_hazard_keywords = [
+        "is it safe", "is safe", "safe to", "safe for", "whether it is safe",
+        "whether safe", "tell me whether", "tell me if it is safe",
+        "can i go", "can we go", "can i sail", "can we sail",
+        "can i go out", "can we go out", "should i go", "should we go",
+        "should i sail", "should we sail", "should i take my boat",
+        "safe route", "route safety", "navigation safety", "trip safe",
+        "trip safety", "safe today", "safe tomorrow", "risk score",
+        "risk level", "weather risk", "safe for my boat",
+        "safe to take my boat out", "safe to travel", "safe to travel there",
+        "safe to reach", "safe to reach there", "safe journey",
+        "dangerous", "danger at sea", "marine danger",
+        "avoid", "avoided", "should be avoided", "zones to avoid",
+        "zone to avoid", "dangerous zone", "dangerous zones",
+        "hazardous zone", "hazardous zones", "hazard zone",
+        "hazard zones", "hazardous marine", "marine hazards", "ocean hazards",
+        "restricted zone", "restricted zones", "geofence", "geofencing",
+        "no-go zone", "no go zone", "no-fishing zone",
     ]
-    is_explicit_safety = contains_any(q, [
-        "is it safe", "safe to", "safe for", "dangerous", "danger", "risk", "can my boat go out", "safest route", "safe route", "route safety"
-    ])
-    if contains_any(q, fishing_advice_keywords) and not is_explicit_safety:
-        return "fishing_advice", [AGENT_PFZ, AGENT_WEATHER], False
-
-    # 4. SAFETY ASSESSMENT (All 4 specialist agents + Risk Engine)
-    safety_keywords = [
-        "is it safe",
-        "is it okay to go",
-        "okay to go fishing",
-        "safe to go",
-        "safe to fish",
-        "safe for fishing",
-        "safe for sailing",
-        "safe to sail",
-        "safe fishing",
-        "safest route",
-        "safe route",
-        "route safety",
-        "navigation safety",
-        "safest way",
-        "safest trajectory",
-        "should i go",
-        "should we go",
-        "should i sail",
-        "should we sail",
-        "can i go tomorrow",
-        "can i go today",
-        "can i go yesterday",
-        "can we go tomorrow",
-        "can we go today",
-        "can i go fishing",
-        "can we go fishing",
-        "can i go out",
-        "can we go out",
-        "can i sail",
-        "can we sail",
-        "can my boat go out",
-        "can i go with my",
-        "safely go out to sea",
-        "should i take my boat",
-        "is it dangerous",
-        "danger today",
-        "safety today",
-        "safety assessment",
-        "trip safe",
-        "trip safety",
-        "safe today",
-        "can i go out to sea",
-        "risk score",
-        "risk level",
-        "weather risk",
-        "safe for my boat",
-        "safe to take my boat out",
-    ]
-    if contains_any(q, safety_keywords):
+    if contains_any(q, safety_and_hazard_keywords):
         return "safety_assessment", ALL_SPECIALISTS.copy(), True
 
-    # 5. SPECIFIC SPECIALIST QUERIES
+    # Broad live-data signals.
     pfz_keywords = [
-        "pfz",
-        "potential fishing zone",
-        "potential fishing zones",
-        "fishing zone",
-        "fishing zones",
-        "fish zone",
-        "best fishing area",
-        "nearest fishing zone",
-        "nearest pfz",
-        "nearby fishing zone",
-        "find a fishing zone",
-        "find nearest pfz",
+        "pfz", "potential fishing zone", "potential fishing zones",
+        "fishing zone", "fishing zones", "fish zone", "best fishing area",
+        "nearest fishing zone", "nearest pfz", "nearby fishing zone",
+        "find a fishing zone", "find nearest pfz", "nearest potential fishing zone",
     ]
-
     weather_keywords = [
-        "marine weather",
-        "wave",
-        "waves",
-        "wave height",
-        "wave direction",
-        "wave period",
-        "swell",
-        "wind",
-        "wind speed",
-        "wind gust",
-        "gusts",
-        "sea temperature",
-        "sea surface temperature",
-        "sst",
-        "weather at sea",
-        "sea condition",
-        "sea conditions",
-        "current wave",
-        "current wind",
+        "marine weather", "weather", "wave", "waves", "wave height",
+        "wave direction", "wave period", "swell", "wind", "wind speed",
+        "wind gust", "gusts", "sea temperature", "sea surface temperature",
+        "sst", "weather at sea", "sea condition", "sea conditions",
+        "current wave", "current wind",
     ]
-
     svas_keywords = [
-        "svas",
-        "advisory",
-        "advisories",
-        "restriction",
-        "restrictions",
-        "vessel advisory",
-        "boat advisory",
-        "sailing restriction",
-        "sailing restrictions",
-        "fishing restriction",
-        "fishing restrictions",
-        "is my boat allowed",
-        "boat allowed to sail",
-        "small vessel advisory",
-        "restrictions for my boat",
+        "svas", "advisory", "advisories", "restriction", "restrictions",
+        "vessel advisory", "boat advisory", "sailing restriction",
+        "sailing restrictions", "fishing restriction", "fishing restrictions",
+        "is my boat allowed", "boat allowed to sail", "small vessel advisory",
+        "restrictions for my boat", "marine warning", "marine warnings",
+        "warning", "warnings", "official warning", "official warnings",
+        "restricted",
     ]
-
     ocean_keywords = [
-        "cyclone",
-        "tsunami",
-        "lightning",
-        "thunderstorm",
-        "chlorophyll",
-        "ocean analysis",
-        "ocean condition",
-        "ocean conditions",
-        "ocean current",
-        "ocean currents",
-        "current velocity",
-        "marine hazard",
-        "ocean hazard",
+        "cyclone", "tsunami", "lightning", "thunderstorm", "chlorophyll",
+        "ocean analysis", "ocean condition", "ocean conditions",
+        "ocean current", "ocean currents", "current velocity",
+        "marine hazard", "marine hazards", "ocean hazard", "ocean hazards",
+        "hazardous", "hazard", "hazards",
     ]
-
-    is_pfz = contains_any(q, pfz_keywords)
-    is_weather = contains_any(q, weather_keywords)
-    is_svas = contains_any(q, svas_keywords)
-    is_ocean = contains_any(q, ocean_keywords)
 
     selected: List[str] = []
-    if is_pfz:
+    if contains_any(q, pfz_keywords):
         selected.append(AGENT_PFZ)
-    if is_weather:
+    if contains_any(q, weather_keywords):
         selected.append(AGENT_WEATHER)
-    if is_svas:
+    if contains_any(q, svas_keywords):
         selected.append(AGENT_SVAS)
-    if is_ocean:
+    if contains_any(q, ocean_keywords):
         selected.append(AGENT_OCEAN)
+
+    # Where-to-fish questions need PFZ + weather even if the exact keyword
+    # list above did not match.
+    fishing_advice_keywords = [
+        "where should i go fishing", "where should we go fishing",
+        "where to go fishing", "where should i fish", "where should we fish",
+        "which fishing area is better", "which fishing area",
+        "recommend fishing spot", "recommend fishing area",
+        "where to go fishing today", "where should i go to fish",
+        "best place to fish today", "suggest fishing area",
+        "which zone is better", "fishing route", "best route to fish",
+    ]
+    if contains_any(q, fishing_advice_keywords):
+        return "fishing_advice", [AGENT_PFZ, AGENT_WEATHER], False
 
     if len(selected) == 1:
         agent = selected[0]
         if agent == AGENT_PFZ:
             return "pfz_query", [AGENT_PFZ], False
-        elif agent == AGENT_WEATHER:
+        if agent == AGENT_WEATHER:
             return "marine_weather_query", [AGENT_WEATHER], False
-        elif agent == AGENT_SVAS:
+        if agent == AGENT_SVAS:
             return "svas_query", [AGENT_SVAS], False
-        elif agent == AGENT_OCEAN:
+        if agent == AGENT_OCEAN:
             return "ocean_analysis_query", [AGENT_OCEAN], False
 
     if len(selected) > 1:
-        # Multi-specialist informative query
         return "multi_specialist_query", selected, False
 
-    # 6. Fallback
-    # If coordinates / general question without marine keywords
-    return "general", [], False
+    if q.startswith("what is "):
+        return "general", [], False
 
+    return "general", [], False
 
 # ===========================================================================
 # SUPERVISOR NODE
@@ -476,6 +355,7 @@ def supervisor_node(state: ORCAState) -> Dict[str, Any]:
     effective_date = resolve_effective_date(query, reference_date)
 
     logger.info("\n[SUPERVISOR]")
+    logger.info("Request ID: %s", state.get("request_id"))
     logger.info("Query: %s", query)
     logger.info("Intent: %s", intent)
     logger.info("Selected agents: %s", selected_agents)
@@ -765,6 +645,8 @@ def build_deterministic_fallback(state: ORCAState) -> Dict[str, Any]:
     intent = state.get("intent", "general")
     specialist_results = state.get("specialist_results", {})
     risk_result = state.get("risk_result", {})
+    q_raw = (state.get("query") or "").strip()
+    q_lower = q_raw.lower()
 
     why: List[str] = []
     key_conditions: List[str] = []
@@ -812,15 +694,41 @@ def build_deterministic_fallback(state: ORCAState) -> Dict[str, Any]:
         score = risk_result.get("risk_score")
         why.extend(risk_result.get("reasons", []))
 
-        if status == "NOT_RECOMMENDED":
-            summary = f"🔴 NOT RECOMMENDED. Risk score: {score}/100. Official restrictions or adverse marine conditions apply."
+        # Check if query asks specifically about avoiding zones / hazardous conditions / geofencing
+        is_avoidance_query = any(k in q_lower for k in ["avoid", "restricted", "geofenc", "hazard", "danger zone"])
+        
+        if is_avoidance_query:
+            if status == "NOT_RECOMMENDED" or official_warnings:
+                summary = "Based on current ocean conditions and advisories, avoid offshore fishing zones under active alert: " + ("; ".join(official_warnings) if official_warnings else "Offshore sectors with rough seas.")
+                final_advice = "Small craft should remain in port or stay within sheltered inshore waters. Note: Respect international maritime boundary lines (IMBL) and local port geofencing restrictions."
+            else:
+                summary = f"No active INCOIS SVAS restrictions or extreme ocean hazards flagged in the search sector. Conditions are {status} (Risk Score: {score if score is not None else 'N/A'}/100)."
+                final_advice = "Avoid venturing beyond authorized fishing zones or crossing international maritime boundaries (IMBL). Always maintain VHF radio watch."
+        elif status == "NOT_RECOMMENDED":
+            summary = "Official restrictions or adverse marine conditions apply."
             final_advice = "Remain in port. Do not venture into sea until safety advisories improve."
         elif status in ["SAFE", "RECOMMENDED"]:
-            summary = f"🟢 CONDITIONS GENERALLY FAVOURABLE. Risk score: {score}/100. Marine conditions are within normal limits."
+            summary = "Marine conditions are generally within normal limits based on the available assessment."
             final_advice = "Proceed with normal caution and continue monitoring official maritime advisories."
         else:
-            summary = f"🟡 CAUTION. Risk score: {score}/100. Moderate marine hazards or vessel precautions in effect."
+            summary = "Moderate marine hazards or vessel precautions are in effect."
             final_advice = "Exercise caution. Small craft should avoid offshore waters if gusts or swell increase."
+
+    elif intent == "multi_specialist_query":
+        summary_parts = []
+        if key_conditions:
+            summary_parts.append("Current conditions: " + ", ".join(key_conditions) + ".")
+        if official_warnings:
+            summary_parts.append("Active advisories: " + "; ".join(official_warnings) + ".")
+        if not summary_parts:
+            summary = f"ORCA evaluated multiple marine parameters for: {q_raw}"
+        else:
+            summary = " ".join(summary_parts)
+
+        if any(k in q_lower for k in ["avoid", "geofenc", "restricted"]):
+            final_advice = "Adhere strictly to official INCOIS advisories and maritime boundary limits (IMBL)."
+        else:
+            final_advice = "Target designated PFZ areas only if local weather and sea conditions remain calm."
 
     elif intent == "pfz_query":
         if isinstance(pfz, dict) and pfz.get("status") == "success":
@@ -860,16 +768,17 @@ def build_deterministic_fallback(state: ORCAState) -> Dict[str, Any]:
         final_advice = "Transmit MAYDAY on VHF Channel 16 if equipped, or call 1554 immediately."
 
     else:
-        q_raw = (state.get("query") or "").strip()
-        q_lower = q_raw.lower()
         greetings = ["hi", "hello", "hey", "good morning", "good afternoon", "good evening", "help", "who are you", "what is orca", "what can you do", "namaste"]
 
         if not q_lower or q_lower in greetings:
             summary = "Namaste! I am ORCA, your Marine Intelligence Assistant. I provide live PFZ locations, marine weather forecasts, SVAS vessel advisories, and safety risk assessments for Indian fishermen."
             final_advice = "Ask about fishing zones, waves, wind, vessel restrictions, or trip safety."
-        elif "productivity" in q_lower or "decline" in q_lower or "fish" in q_lower:
+        elif ("productivity" in q_lower and ("decline" in q_lower or "drop" in q_lower or "decreas" in q_lower or "low" in q_lower or "why" in q_lower)) or "why has fish productivity" in q_lower:
             summary = "Coastal fish productivity can decline due to a combination of sea surface temperature fluctuations, coastal pollution, overfishing, habitat degradation, and shifting ocean current patterns affecting chlorophyll and plankton distribution."
             final_advice = "Monitor INCOIS Potential Fishing Zones (PFZ) and SST charts for active fish aggregation zones."
+        elif "geofenc" in q_lower or "restricted zone" in q_lower or "zones should be avoided" in q_lower or "border" in q_lower:
+            summary = "Fishing vessels must avoid designated maritime restricted zones, marine protected areas, sensitive naval defense corridors, and international maritime boundary lines (IMBL)."
+            final_advice = "Always maintain GPS navigation awareness, heed Coast Guard border warnings, and check live INCOIS SVAS hazard alerts."
         elif "capital of" in q_lower:
             if "usa" in q_lower or "america" in q_lower or "united states" in q_lower:
                 summary = "Washington, D.C. is the capital of the United States of America."
@@ -878,10 +787,10 @@ def build_deterministic_fallback(state: ORCAState) -> Dict[str, Any]:
             else:
                 summary = f"General geography response: {q_raw}"
             final_advice = "Ask about marine weather or fishing safety when planning your next trip."
-        elif "pfz" in q_lower or "potential fishing zone" in q_lower:
+        elif "what is a pfz" in q_lower or "what is pfz" in q_lower or "potential fishing zone" in q_lower:
             summary = "A Potential Fishing Zone (PFZ) is an ocean region identified by satellite oceanography (SST & Chlorophyll) where fish are likely to aggregate."
             final_advice = "Ask 'Where is the nearest PFZ?' to locate active fishing zones."
-        elif "svas" in q_lower or "advisory" in q_lower:
+        elif "what is svas" in q_lower or "what is svas advisory" in q_lower:
             summary = "Small Vessel Advisory Service (SVAS) provides boat-category specific safety warnings issued by INCOIS for motorized vessels under 6m-7m width."
             final_advice = "Ask 'Are there any restrictions for my boat?' to check active advisories."
         else:
@@ -903,7 +812,7 @@ def build_deterministic_fallback(state: ORCAState) -> Dict[str, Any]:
 # ===========================================================================
 
 def general_response_node(state: ORCAState) -> Dict[str, Any]:
-    """Handles general conversation and emergency queries without calling marine specialist APIs."""
+    """Handles general conversation and emergency queries without specialist APIs."""
     query = state.get("query", "")
     intent = state.get("intent", "general")
 
@@ -911,8 +820,13 @@ def general_response_node(state: ORCAState) -> Dict[str, Any]:
 
     if intent == "emergency":
         explanation = {
-            "summary": "🚨 EMERGENCY DIRECTIVE: If you or your vessel are in distress at sea, immediately contact maritime rescue authorities.",
-            "why": ["User reported an active emergency or distress situation at sea."],
+            "summary": (
+                "🚨 EMERGENCY: If you or your vessel are in immediate danger at sea, "
+                "contact maritime rescue authorities now."
+            ),
+            "why": [
+                "The query indicates a possible emergency or distress situation at sea."
+            ],
             "key_conditions": [],
             "official_warnings": [
                 "Indian Coast Guard Emergency Toll-Free Helpline: 1554",
@@ -921,43 +835,79 @@ def general_response_node(state: ORCAState) -> Dict[str, Any]:
                 "VHF Distress Frequency: Channel 16 (156.8 MHz)",
             ],
             "data_limitations": [],
-            "final_advice": "Do not rely solely on automated chat during life-threatening situations. Call 1554 or broadcast MAYDAY on VHF Channel 16 immediately.",
+            "final_advice": (
+                "Do not rely solely on automated chat during a life-threatening situation. "
+                "Call 1554 or broadcast MAYDAY on VHF Channel 16 immediately."
+            ),
         }
-        recommendation = "🚨 MARITIME EMERGENCY — CONTACT COAST GUARD (1554)"
+
+        recommendation = "\n\n".join(
+            [
+                "🚨 MARITIME EMERGENCY — CONTACT COAST GUARD (1554)",
+                explanation["summary"],
+                explanation["final_advice"],
+            ]
+        )
+
         return {
             "gemini_explanation": explanation,
             "recommendation": recommendation,
         }
 
-    # General knowledge / capability
     prompt = f"""
 You are ORCA Marine Intelligence, an authoritative AI assistant for Indian fishermen and mariners.
-The user asked a general question: "{query}".
 
-Explain concisely in simple, fisherman-friendly terms.
-Do NOT invent live weather or fake coordinates.
-Return JSON with this structure:
+The user asked:
+"{query}"
+
+Answer the user's actual question directly and concisely in simple,
+fisherman-friendly language.
+
+IMPORTANT:
+- Do NOT invent live weather information.
+- Do NOT invent PFZ coordinates or distances.
+- Do NOT claim real-time marine conditions unless specialist evidence was provided.
+- If the question is general knowledge, answer it honestly.
+- Return valid JSON only.
+
+Return exactly this structure:
 {{
-  "summary": "Concise answer to the user's question.",
+  "summary": "Concise direct answer to the user's question.",
   "why": [],
   "key_conditions": [],
   "official_warnings": [],
   "data_limitations": [],
-  "final_advice": "Brief helpful guidance on how ORCA can assist."
+  "final_advice": "Brief practical guidance."
 }}
 """
+
     try:
         explanation = execute_gemini_json_with_fallback(prompt)
     except Exception as exc:
         logger.info("Using fallback for general response: %s", exc)
         explanation = build_deterministic_fallback(state)
 
-    recommendation = "ℹ️ GENERAL INQUIRY"
+    summary = str(explanation.get("summary") or "").strip()
+    final_advice = str(explanation.get("final_advice") or "").strip()
+
+    parts: List[str] = []
+    if summary:
+        parts.append(summary)
+    if final_advice and final_advice != summary:
+        parts.append(final_advice)
+
+    recommendation = "\n\n".join(parts)
+    if not recommendation:
+        recommendation = (
+            "I am ORCA, your Marine Intelligence Assistant. "
+            "Ask me about fishing zones, waves, wind, marine weather, "
+            "boat safety, or sailing conditions."
+        )
+
     return {
         "gemini_explanation": explanation,
         "recommendation": recommendation,
     }
-
 
 # ===========================================================================
 # EXPLANATION NODE
@@ -1031,33 +981,56 @@ Return JSON exactly matching this structure:
 # ===========================================================================
 
 def final_response_node(state: ORCAState) -> Dict[str, Any]:
-    """Constructs final structured response compliant with frontend and API contracts."""
+    """Construct the final API response and a readable chat recommendation."""
     logger.info("\n[FINAL RESPONSE] Formatting complete ORCA assessment response...")
 
-    risk_result = state.get("risk_result", {})
-    explanation = state.get("gemini_explanation", {})
+    risk_result = state.get("risk_result", {}) or {}
+    explanation = state.get("gemini_explanation", {}) or {}
     intent = state.get("intent", "general")
     selected_agents = state.get("selected_agents", [])
     risk_required = state.get("risk_required", False)
+    specialist_results = state.get("specialist_results", {}) or {}
 
     status = risk_result.get("status")
     score = risk_result.get("risk_score")
 
-    if state.get("recommendation"):
-        recommendation = state["recommendation"]
-    elif status == "NOT_RECOMMENDED":
-        recommendation = f"🔴 NOT RECOMMENDED (Risk Score: {score}/100)"
-    elif status in ["SAFE", "RECOMMENDED"]:
-        recommendation = f"🟢 CONDITIONS GENERALLY FAVOURABLE (Risk Score: {score}/100)"
-    elif status in ["CAUTION", "HIGH_RISK"]:
-        recommendation = f"🟡 CAUTION (Risk Score: {score}/100)"
-    elif intent == "emergency":
-        recommendation = "🚨 MARITIME EMERGENCY — CONTACT COAST GUARD (1554)"
-    else:
-        recommendation = "ℹ️ INFORMATION QUERY"
+    summary = str(explanation.get("summary") or "").strip()
+    final_advice = str(explanation.get("final_advice") or "").strip()
 
-    specialist_results = state.get("specialist_results", {})
+    parts: List[str] = []
+
+    if risk_required:
+        if status == "NOT_RECOMMENDED":
+            parts.append(f"🔴 NOT RECOMMENDED (Risk Score: {score}/100)")
+        elif status in ["SAFE", "RECOMMENDED"]:
+            parts.append(
+                f"🟢 CONDITIONS GENERALLY FAVOURABLE (Risk Score: {score}/100)"
+            )
+        elif status in ["CAUTION", "HIGH_RISK"]:
+            parts.append(f"🟡 CAUTION (Risk Score: {score}/100)")
+        elif status:
+            score_text = f" (Risk Score: {score}/100)" if score is not None else ""
+            parts.append(f"⚠️ {status}{score_text}")
+
+    if summary:
+        parts.append(summary)
+
+    if final_advice and final_advice != summary:
+        parts.append(final_advice)
+
+    if not parts:
+        existing_recommendation = str(state.get("recommendation") or "").strip()
+        if existing_recommendation:
+            parts.append(existing_recommendation)
+        else:
+            parts.append(
+                "ORCA completed the request, but a detailed explanation is currently unavailable."
+            )
+
+    recommendation = "\n\n".join(parts)
+
     final_dict = {
+        "request_id": state.get("request_id"),
         "query": state.get("query", ""),
         "location": {
             "latitude": state.get("latitude"),
@@ -1069,20 +1042,21 @@ def final_response_node(state: ORCAState) -> Dict[str, Any]:
         "selected_agents": selected_agents,
         "risk_required": risk_required,
         "recommendation": recommendation,
-        "risk": risk_result if risk_required else {"status": "not_required", "risk_score": None},
+        "risk": (
+            risk_result
+            if risk_required
+            else {"status": "not_required", "risk_score": None}
+        ),
         "explanation": explanation,
         "specialist_results": specialist_results,
     }
 
-    # Keep the top-level fields used by existing clients, but expose only
-    # evidence that was genuinely collected for this query.
     final_dict.update(specialist_results)
 
     return {
         "recommendation": recommendation,
         "final_response": final_dict,
     }
-
 
 # ===========================================================================
 # BUILD LANGGRAPH
@@ -1156,14 +1130,19 @@ def run_orca(
     date: Optional[str] = None,
     boat_width_m: Optional[float] = 5.0,
     query: str = "",
+    request_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Main public ORCA entry point.
     """
+    import uuid
+    if not request_id:
+        request_id = str(uuid.uuid4())
     if not date:
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     initial_state: ORCAState = {
+        "request_id": request_id,
         "query": query or "",
         "latitude": float(latitude) if latitude is not None else 19.72,
         "longitude": float(longitude) if longitude is not None else 72.70,
@@ -1181,6 +1160,7 @@ def orchestrate_orca_assessment(
     date: Optional[str] = None,
     boat_width_m: Optional[float] = 5.0,
     query: str = "",
+    request_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Compatibility alias for FastAPI and external bridges."""
     return run_orca(
@@ -1189,4 +1169,6 @@ def orchestrate_orca_assessment(
         date=date,
         boat_width_m=boat_width_m,
         query=query,
+        request_id=request_id,
     )
+

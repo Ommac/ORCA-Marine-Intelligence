@@ -7,6 +7,7 @@
 
 import { OrcaRequest, OrcaResponse, AssessmentStatus, SeverityLevel, Hazard } from '../types/orca';
 import { getMockResponseForRequest, MOCK_PALGHAR_RESPONSE } from '../mocks/orcaResponse';
+import { getActiveTrip, getTodayDateISO, setActiveLocation, setActiveDate, setActiveBoatWidth } from './tripStore';
 
 // Configuration Flag: Set to false for live backend API calls (POST /api/orca/assess)
 export const USE_MOCK_API = false;
@@ -46,6 +47,7 @@ function notifyAssessmentListeners(response: OrcaResponse) {
  * Normalizes raw structured response from POST /api/orca/assess into OrcaResponse
  */
 export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaResponse {
+  const activeTrip = getActiveTrip();
   const riskStatus: AssessmentStatus =
     raw?.risk?.status || raw?.risk?.risk_status || 'SAFE';
 
@@ -85,13 +87,17 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
     description: w.message || 'Environmental hazard reported.',
   }));
 
+  const requestId = raw?.request_id || req?.request_id;
+
   return {
+    request_id: requestId,
     request: req || {
-      latitude: raw?.input?.latitude ?? 19.72,
-      longitude: raw?.input?.longitude ?? 72.70,
-      date: raw?.input?.date ?? '2026-09-04',
-      boat_width_m: raw?.input?.boat_width_m ?? 5.0,
-      query: raw?.input?.query,
+      latitude: raw?.location?.latitude ?? raw?.input?.latitude ?? activeTrip.location.latitude,
+      longitude: raw?.location?.longitude ?? raw?.input?.longitude ?? activeTrip.location.longitude,
+      date: raw?.date ?? raw?.input?.date ?? activeTrip.date ?? getTodayDateISO(),
+      boat_width_m: raw?.boat_width_m ?? raw?.input?.boat_width_m ?? activeTrip.boatWidthM ?? 5.0,
+      query: raw?.query ?? raw?.input?.query,
+      request_id: requestId,
     },
     assessment: {
       status: riskStatus,
@@ -130,6 +136,7 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
       generated_at: raw?.timestamp || new Date().toISOString(),
       sources: raw?.risk?.source_status ? Object.keys(raw.risk.source_status) : [],
       version: '1.0.0',
+      request_id: requestId,
     },
     recommendation: raw?.recommendation,
   };
@@ -140,9 +147,19 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
  * Calls POST /api/orca/assess on backend.
  */
 export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaResponse> {
+  const activeTrip = getActiveTrip();
+  const effectiveRequest: OrcaRequest = {
+    query: request.query || `Check conditions for ${activeTrip.location.name}`,
+    latitude: request.latitude ?? activeTrip.location.latitude,
+    longitude: request.longitude ?? activeTrip.location.longitude,
+    date: request.date ?? activeTrip.date ?? getTodayDateISO(),
+    boat_width_m: request.boat_width_m ?? activeTrip.boatWidthM ?? 5.0,
+    request_id: request.request_id,
+  };
+
   if (USE_MOCK_API) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    const mockData = getMockResponseForRequest(request);
+    const mockData = getMockResponseForRequest(effectiveRequest);
     notifyAssessmentListeners(mockData);
     return mockData;
   }
@@ -156,11 +173,12 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
         'Accept': 'application/json',
       },
       body: JSON.stringify({
-        query: request.query || 'Check marine conditions for fishing.',
-        latitude: request.latitude,
-        longitude: request.longitude,
-        date: request.date,
-        boat_width_m: request.boat_width_m,
+        query: effectiveRequest.query,
+        latitude: effectiveRequest.latitude,
+        longitude: effectiveRequest.longitude,
+        date: effectiveRequest.date,
+        boat_width_m: effectiveRequest.boat_width_m,
+        request_id: effectiveRequest.request_id,
       }),
     });
 
@@ -170,7 +188,7 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
     }
 
     const rawData = await response.json();
-    const normalized: OrcaResponse = normalizeBackendResponse(rawData, request);
+    const normalized: OrcaResponse = normalizeBackendResponse(rawData, effectiveRequest);
     notifyAssessmentListeners(normalized);
     return normalized;
   } catch (error: any) {
@@ -181,12 +199,18 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
 
 /**
  * Natural language chat query method for the "Ask ORCA" screen.
- * Calls POST /api/orca/assess
+ * Calls POST /api/orca/assess using the active trip context.
  */
 export async function queryOrcaAssistant(
   queryText: string,
   context?: Partial<OrcaRequest>
-): Promise<{ text: string; assessment?: OrcaResponse; rawBackendResponse?: any }> {
+): Promise<{ text: string; assessment?: OrcaResponse; rawBackendResponse?: any; requestId?: string }> {
+  const activeTrip = getActiveTrip();
+  const targetLatitude = context?.latitude ?? activeTrip.location.latitude;
+  const targetLongitude = context?.longitude ?? activeTrip.location.longitude;
+  const targetDate = context?.date ?? activeTrip.date ?? getTodayDateISO();
+  const targetBoatWidth = context?.boat_width_m ?? activeTrip.boatWidthM ?? 5.0;
+
   if (USE_MOCK_API) {
     await new Promise((resolve) => setTimeout(resolve, 900));
     const current = getCurrentAssessment();
@@ -218,17 +242,20 @@ export async function queryOrcaAssistant(
     }
 
     return {
-      text: `Based on your selected location and boat size, overall conditions are rated ${status} (Risk score: ${current.assessment.risk_score}/100). Nearest fishing zone is ${pfzDist ?? 39.0} km away. Stay safe and monitor alerts!`,
+      text: `Based on your selected location (${activeTrip.location.name}) and boat size, overall conditions are rated ${status} (Risk score: ${current.assessment.risk_score}/100). Nearest fishing zone is ${pfzDist ?? 39.0} km away. Stay safe and monitor alerts!`,
       assessment: current,
     };
   }
 
+  const clientRequestId = context?.request_id || `req-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
   const reqBody: OrcaRequest = {
     query: queryText,
-    latitude: context?.latitude ?? currentAssessmentState.request?.latitude ?? 19.72,
-    longitude: context?.longitude ?? currentAssessmentState.request?.longitude ?? 72.70,
-    date: context?.date ?? currentAssessmentState.request?.date ?? '2026-09-04',
-    boat_width_m: context?.boat_width_m ?? currentAssessmentState.request?.boat_width_m ?? 5.0,
+    latitude: targetLatitude,
+    longitude: targetLongitude,
+    date: targetDate,
+    boat_width_m: targetBoatWidth,
+    request_id: clientRequestId,
   };
 
   try {
@@ -257,9 +284,11 @@ export async function queryOrcaAssistant(
       text: answerText,
       assessment: normalized,
       rawBackendResponse: data,
+      requestId: data.request_id || clientRequestId,
     };
   } catch (error: any) {
     console.error('queryOrcaAssistant live backend error:', error);
     throw error;
   }
 }
+

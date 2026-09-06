@@ -11,9 +11,10 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Send, User, Sparkles, Compass, RotateCcw } from 'lucide-react-native';
+import { Send, User, Sparkles, Compass, RotateCcw, MapPin } from 'lucide-react-native';
 import { OrcaHeader } from '../../components/OrcaHeader';
 import { queryOrcaAssistant } from '../../services/api';
+import { getActiveTrip, subscribeToTrip } from '../../services/tripStore';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
 
 interface ChatMessage {
@@ -26,6 +27,7 @@ interface ChatMessage {
 }
 
 export default function AskOrcaScreen() {
+  const [activeTrip, setActiveTrip] = useState(getActiveTrip());
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome-1',
@@ -37,6 +39,13 @@ export default function AskOrcaScreen() {
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToTrip((trip) => {
+      setActiveTrip(trip);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const sampleQuestions = [
     'Is it safe for me to go fishing today?',
@@ -50,8 +59,9 @@ export default function AskOrcaScreen() {
     const text = (queryToSend || inputText).trim();
     if (!text || isTyping) return;
 
+    const userMsgId = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const userMessage: ChatMessage = {
-      id: `msg-${Date.now()}`,
+      id: userMsgId,
       sender: 'user',
       text,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -62,9 +72,14 @@ export default function AskOrcaScreen() {
     setIsTyping(true);
 
     try {
-      const response = await queryOrcaAssistant(text);
+      const response = await queryOrcaAssistant(text, {
+        latitude: activeTrip.location.latitude,
+        longitude: activeTrip.location.longitude,
+        date: activeTrip.date,
+        boat_width_m: activeTrip.boatWidthM,
+      });
       const orcaMessage: ChatMessage = {
-        id: `orca-${Date.now()}`,
+        id: `orca-${response.requestId || Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         sender: 'orca',
         text: response.text,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -72,7 +87,7 @@ export default function AskOrcaScreen() {
       setMessages((prev) => [...prev, orcaMessage]);
     } catch (err: any) {
       const errorMessage: ChatMessage = {
-        id: `err-${Date.now()}`,
+        id: `err-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         sender: 'orca',
         text: `Unable to connect to ORCA Backend: ${err?.message || 'Network error'}. Please verify the backend server is running.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -93,7 +108,7 @@ export default function AskOrcaScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <OrcaHeader
         title="Ask ORCA"
-        subtitle="Ask anything about your fishing trip"
+        subtitle={`Active Spot: ${activeTrip.location.name} (${activeTrip.location.latitude.toFixed(2)}°N, ${activeTrip.location.longitude.toFixed(2)}°E)`}
       />
 
       <KeyboardAvoidingView

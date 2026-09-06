@@ -28,7 +28,7 @@ Architecture:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,6 +73,7 @@ class OrcaAssessRequest(BaseModel):
     longitude: float = Field(..., ge=-180.0, le=180.0, description="Vessel longitude (-180 to 180).")
     date: str = Field(..., description="Requested target date in YYYY-MM-DD format.")
     boat_width_m: float = Field(..., gt=0.0, description="Vessel width in meters.")
+    request_id: Optional[str] = Field(None, description="Client request UUID for correlation.")
 
     model_config = {
         "json_schema_extra": {
@@ -82,6 +83,7 @@ class OrcaAssessRequest(BaseModel):
                 "longitude": 72.70,
                 "date": "2026-09-04",
                 "boat_width_m": 5.0,
+                "request_id": "req-12345",
             }
         }
     }
@@ -115,6 +117,7 @@ def assess_marine_conditions(payload: OrcaAssessRequest) -> Dict[str, Any]:
             date=payload.date,
             boat_width_m=payload.boat_width_m,
             query=payload.query,
+            request_id=payload.request_id,
         )
         return assessment
     except Exception as exc:

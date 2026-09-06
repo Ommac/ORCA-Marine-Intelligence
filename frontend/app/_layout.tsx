@@ -1,10 +1,15 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { COLORS } from '../constants/theme';
+import { initTripStore } from '../services/tripStore';
 
 export default function RootLayout() {
+  useEffect(() => {
+    initTripStore();
+  }, []);
+
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />

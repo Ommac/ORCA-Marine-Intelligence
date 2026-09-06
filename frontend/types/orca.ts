@@ -13,6 +13,7 @@ export interface OrcaRequest {
   longitude: number;
   date: string; // YYYY-MM-DD
   boat_width_m: number;
+  request_id?: string;
 }
 
 export interface Assessment {
@@ -81,9 +82,11 @@ export interface Meta {
   generated_at?: string;
   sources?: string[];
   version?: string;
+  request_id?: string;
 }
 
 export interface OrcaResponse {
+  request_id?: string;
   request?: OrcaRequest;
   assessment: Assessment;
   pfz: PFZData;
