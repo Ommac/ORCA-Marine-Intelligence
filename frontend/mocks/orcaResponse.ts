@@ -105,6 +105,19 @@ export const MOCK_PALGHAR_RESPONSE: OrcaResponse = {
       source: 'INCOIS',
     },
   ],
+  alerts: [
+    {
+      id: 'alert-mock-1',
+      request_id: 'mock-req-1',
+      type: 'vessel',
+      severity: 'high',
+      title: 'Small Vessel Advisory Active',
+      message: 'Palghar district (0-100)km, Boats less than 6m wide should not sail.',
+      source: 'svas',
+      timestamp: '2026-09-02T17:00:00Z',
+      action: 'Boats under 6m should remain within port or sheltered inshore waters.',
+    },
+  ],
   meta: {
     generated_at: '2026-09-02T17:00:00',
     sources: ['INCOIS', 'Open-Meteo', 'IMD'],
@@ -211,6 +224,7 @@ export const MOCK_RATNAGIRI_SAFE_RESPONSE: OrcaResponse = {
       source: 'INCOIS',
     },
   ],
+  alerts: [],
   meta: {
     generated_at: '2026-09-02T17:00:00',
     sources: ['INCOIS', 'Open-Meteo'],

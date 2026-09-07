@@ -116,6 +116,14 @@ export function getStatusTheme(status: AssessmentStatus) {
 export function getSeverityTheme(severity: SeverityLevel | string) {
   const norm = (severity || 'NONE').toUpperCase();
   switch (norm) {
+    case 'CRITICAL':
+      return {
+        label: 'CRITICAL',
+        textColor: '#7F1D1D',
+        bgColor: '#FEE2E2',
+        borderColor: '#FECACA',
+        accentColor: '#DC2626',
+      };
     case 'HIGH':
       return {
         label: 'HIGH',
@@ -123,6 +131,14 @@ export function getSeverityTheme(severity: SeverityLevel | string) {
         bgColor: COLORS.dangerBg,
         borderColor: COLORS.dangerBorder,
         accentColor: COLORS.danger,
+      };
+    case 'MODERATE':
+      return {
+        label: 'MODERATE',
+        textColor: COLORS.cautionText,
+        bgColor: COLORS.cautionBg,
+        borderColor: COLORS.cautionBorder,
+        accentColor: COLORS.caution,
       };
     case 'MEDIUM':
       return {
@@ -139,6 +155,14 @@ export function getSeverityTheme(severity: SeverityLevel | string) {
         bgColor: COLORS.safeBg,
         borderColor: COLORS.safeBorder,
         accentColor: COLORS.safe,
+      };
+    case 'INFO':
+      return {
+        label: 'INFO',
+        textColor: '#1E40AF',
+        bgColor: '#DBEAFE',
+        borderColor: '#BFDBFE',
+        accentColor: '#3B82F6',
       };
     case 'NONE':
     default:

@@ -5,7 +5,7 @@
  * Consumes and returns strictly normalized OrcaResponse objects from the live ORCA backend.
  */
 
-import { OrcaRequest, OrcaResponse, AssessmentStatus, SeverityLevel, Hazard } from '../types/orca';
+import { OrcaRequest, OrcaResponse, AssessmentStatus, SeverityLevel, Hazard, Alert } from '../types/orca';
 import { getMockResponseForRequest, MOCK_PALGHAR_RESPONSE } from '../mocks/orcaResponse';
 import { getActiveTrip, getTodayDateISO, setActiveLocation, setActiveDate, setActiveBoatWidth } from './tripStore';
 
@@ -15,11 +15,29 @@ export const USE_MOCK_API = false;
 // Backend Base URL configured via environment variable
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 
+// Empty initial assessment — no mock/hardcoded data before first real assessment
+const EMPTY_INITIAL_ASSESSMENT: OrcaResponse = {
+  assessment: {
+    status: 'SAFE' as AssessmentStatus,
+    risk_score: 0,
+    summary: '',
+  },
+  pfz: { available: false },
+  marine: { available: false },
+  svas: { available: false },
+  hazards: [],
+  alerts: [],
+  meta: {},
+};
+
 // In-memory active session cache so tabs share the same trip state seamlessly
-let currentAssessmentState: OrcaResponse = MOCK_PALGHAR_RESPONSE;
+let currentAssessmentState: OrcaResponse = EMPTY_INITIAL_ASSESSMENT;
 
 type AssessmentListener = (response: OrcaResponse) => void;
 const listeners: Set<AssessmentListener> = new Set();
+
+// Race condition guard: tracks the most recent request to prevent stale responses
+let latestRequestId: string | null = null;
 
 export function getCurrentAssessment(): OrcaResponse {
   return currentAssessmentState;
@@ -33,6 +51,12 @@ export function subscribeToAssessment(listener: AssessmentListener): () => void 
 }
 
 function notifyAssessmentListeners(response: OrcaResponse) {
+  // Race condition guard: only update if this is the latest request
+  const incomingRequestId = response.request_id || response.meta?.request_id;
+  if (latestRequestId && incomingRequestId && incomingRequestId !== latestRequestId) {
+    console.warn(`[ORCA ALERTS] Ignoring stale response: ${incomingRequestId} (latest: ${latestRequestId})`);
+    return;
+  }
   currentAssessmentState = response;
   listeners.forEach((listener) => {
     try {
@@ -97,6 +121,30 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
 
   const requestId = raw?.request_id || req?.request_id;
 
+  // Map structured alerts from backend (deterministic alert generator)
+  const rawAlerts: Alert[] = Array.isArray(raw?.alerts) ? raw.alerts.map((a: any) => ({
+    id: a.id || `alert-${a.source || 'orca'}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    request_id: a.request_id || requestId,
+    type: a.type || 'risk',
+    severity: (a.severity || 'info').toLowerCase() as any,
+    title: a.title || 'Marine Alert',
+    message: a.message || '',
+    source: a.source || 'orca',
+    timestamp: a.timestamp || new Date().toISOString(),
+    action: a.action,
+  })) : [];
+
+  // Deduplicate alerts by type+severity+title+message+source
+  const alertDeduplicationKeys = new Set<string>();
+  const dedupedAlerts: Alert[] = [];
+  for (const alert of rawAlerts) {
+    const key = `${alert.type.trim().toLowerCase()}|${alert.severity.trim().toLowerCase()}|${alert.title.trim().toLowerCase()}|${alert.message.trim().toLowerCase()}|${alert.source.trim().toLowerCase()}`;
+    if (!alertDeduplicationKeys.has(key)) {
+      alertDeduplicationKeys.add(key);
+      dedupedAlerts.push(alert);
+    }
+  }
+
   return {
     request_id: requestId,
     request: req || {
@@ -141,6 +189,7 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
       reason: svasRaw.reason,
     },
     hazards: hazardsList,
+    alerts: dedupedAlerts,
     meta: {
       generated_at: raw?.timestamp || new Date().toISOString(),
       sources: raw?.risk?.source_status ? Object.keys(raw.risk.source_status) : [],
@@ -163,7 +212,7 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
     longitude: request.longitude ?? activeTrip.location.longitude,
     date: request.date ?? activeTrip.date ?? getTodayDateISO(),
     boat_width_m: request.boat_width_m ?? activeTrip.boatWidthM ?? 5.0,
-    request_id: request.request_id,
+    request_id: request.request_id || `req-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
   };
 
   if (USE_MOCK_API) {
@@ -172,6 +221,9 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
     notifyAssessmentListeners(mockData);
     return mockData;
   }
+
+  // Track this as the latest request for race condition prevention
+  latestRequestId = effectiveRequest.request_id || null;
 
   try {
     const endpoint = `${BASE_URL.replace(/\/+$/, '')}/api/orca/assess`;
@@ -198,6 +250,11 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
 
     const rawData = await response.json();
     const normalized: OrcaResponse = normalizeBackendResponse(rawData, effectiveRequest);
+    
+    console.log(`[ORCA ALERTS DEBUG] Request ID: ${effectiveRequest.request_id}`);
+    console.log(`[ORCA ALERTS DEBUG] Alerts received: ${normalized.alerts?.length ?? 0}`);
+    console.log(`[ORCA ALERTS DEBUG] Alert IDs:`, normalized.alerts?.map(a => a.id));
+
     notifyAssessmentListeners(normalized);
     return normalized;
   } catch (error: any) {
@@ -266,6 +323,8 @@ export async function queryOrcaAssistant(
     boat_width_m: targetBoatWidth,
     request_id: clientRequestId,
   };
+
+  latestRequestId = clientRequestId;
 
   try {
     const endpoint = `${BASE_URL.replace(/\/+$/, '')}/api/orca/assess`;

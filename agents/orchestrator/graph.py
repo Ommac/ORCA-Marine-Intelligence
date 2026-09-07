@@ -977,6 +977,295 @@ Return JSON exactly matching this structure:
 
 
 # ===========================================================================
+# ===========================================================================
+# DETERMINISTIC ALERTS
+# ===========================================================================
+
+import hashlib
+
+def generate_deterministic_alerts(
+    state: ORCAState,
+    specialist_results: Dict[str, Any],
+    risk_result: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """
+    Deterministically generate safety alerts strictly based on actual conditions
+    reported by specialist agents and the Risk Engine.
+    
+    Alert severity is 100% deterministic and rule-based.
+    No LLM creates or alters alert severity.
+    Normal safe conditions produce NO active danger alerts.
+    """
+    alerts: List[Dict[str, Any]] = []
+    request_id = state.get("request_id") or "req-unknown"
+    timestamp = datetime.now(timezone.utc).isoformat()
+    q_lower = (state.get("query") or "").lower()
+    boat_width = state.get("boat_width_m") or 5.0
+    
+    # -----------------------------------------------------------------------
+    # 1. MARINE WEATHER ALERTS
+    # -----------------------------------------------------------------------
+    mw_result = specialist_results.get("marine_weather", {})
+    if isinstance(mw_result, dict) and mw_result.get("status") == "success":
+        marine = mw_result.get("marine") or {}
+        weather = mw_result.get("weather") or {}
+        wave_height = marine.get("wave_height_m")
+        wind_speed = weather.get("wind_speed_knots")
+        wind_gusts = weather.get("wind_gusts_knots")
+        
+        # Wave Height Warnings
+        if wave_height is not None and isinstance(wave_height, (int, float)):
+            if 2.0 <= wave_height < 3.0:
+                alerts.append({
+                    "type": "weather",
+                    "severity": "high",
+                    "title": "High Wave Warning",
+                    "message": f"Elevated wave height of {wave_height:.1f} m detected near your location.",
+                    "source": "marine_weather",
+                    "action": "Exercise extreme caution. Small fishing craft should avoid open sea.",
+                })
+            elif wave_height >= 3.0:
+                alerts.append({
+                    "type": "weather",
+                    "severity": "critical",
+                    "title": "Severe Wave Hazard",
+                    "message": f"Dangerous wave height of {wave_height:.1f} m detected. High risk of capsizing.",
+                    "source": "marine_weather",
+                    "action": "Do not sail. Severe wave hazard in effect.",
+                })
+                
+        # Wind Speed Warnings
+        if wind_speed is not None and isinstance(wind_speed, (int, float)):
+            if 20.0 <= wind_speed < 30.0:
+                alerts.append({
+                    "type": "weather",
+                    "severity": "high",
+                    "title": "Strong Wind Warning",
+                    "message": f"Sustained wind speeds reaching {wind_speed:.1f} knots in the coastal sector.",
+                    "source": "marine_weather",
+                    "action": "Small craft should exercise caution and stay within sheltered waters.",
+                })
+            elif wind_speed >= 30.0:
+                alerts.append({
+                    "type": "weather",
+                    "severity": "critical",
+                    "title": "Severe Gale / Storm Winds",
+                    "message": f"Severe wind speeds reaching {wind_speed:.1f} knots. Gale conditions active.",
+                    "source": "marine_weather",
+                    "action": "Do not sail. Remain in port until conditions improve.",
+                })
+
+        # Wind Gust Warnings
+        if wind_gusts is not None and isinstance(wind_gusts, (int, float)):
+            if 25.0 <= wind_gusts < 35.0:
+                alerts.append({
+                    "type": "weather",
+                    "severity": "high",
+                    "title": "Dangerous Gust Warning",
+                    "message": f"Dangerous wind gusts reaching {wind_gusts:.1f} knots detected.",
+                    "source": "marine_weather",
+                    "action": "Secure vessel gear and monitor sudden changes in wind direction.",
+                })
+            elif wind_gusts >= 35.0:
+                alerts.append({
+                    "type": "weather",
+                    "severity": "critical",
+                    "title": "Extreme Gust Hazard",
+                    "message": f"Extreme squall gusts reaching {wind_gusts:.1f} knots detected.",
+                    "source": "marine_weather",
+                    "action": "Do not sail. Seek immediate sheltered harbor.",
+                })
+
+    # -----------------------------------------------------------------------
+    # 2. OCEAN ANALYSIS HAZARDS
+    # -----------------------------------------------------------------------
+    oa_result = specialist_results.get("ocean_analysis", {})
+    if isinstance(oa_result, dict):
+        warnings = oa_result.get("warnings", [])
+        for w in warnings:
+            w_type = str(w.get("type", "")).lower()
+            w_sev = str(w.get("severity", "")).lower()
+            w_msg = w.get("message", "Environmental hazard active.")
+            
+            if "cyclone" in w_type:
+                alerts.append({
+                    "type": "ocean",
+                    "severity": "critical",
+                    "title": "Tropical Cyclone Warning",
+                    "message": w_msg,
+                    "source": "ocean_analysis",
+                    "action": "Seek shelter immediately and follow Coast Guard emergency directives.",
+                })
+            elif "tsunami" in w_type and w_sev in ["critical", "high"]:
+                alerts.append({
+                    "type": "ocean",
+                    "severity": "critical",
+                    "title": "Tsunami Warning",
+                    "message": w_msg,
+                    "source": "ocean_analysis",
+                    "action": "Evacuate coastal waters and heed official disaster management notices.",
+                })
+            elif "thunderstorm" in w_type or "lightning" in w_type:
+                alerts.append({
+                    "type": "ocean",
+                    "severity": "high",
+                    "title": "Active Thunderstorm Warning",
+                    "message": w_msg,
+                    "source": "ocean_analysis",
+                    "action": "Avoid open waters; seek safe harbor immediately to avoid lightning strikes.",
+                })
+            elif "convective" in w_type:
+                alerts.append({
+                    "type": "ocean",
+                    "severity": "moderate",
+                    "title": "Convective Instability Advisory",
+                    "message": w_msg,
+                    "source": "ocean_analysis",
+                    "action": "Monitor live weather radar updates before venturing offshore.",
+                })
+            elif w_sev in ["critical", "high"]:
+                alerts.append({
+                    "type": "ocean",
+                    "severity": w_sev,
+                    "title": "Ocean Hazard Warning",
+                    "message": w_msg,
+                    "source": "ocean_analysis",
+                    "action": "Exercise high caution and monitor official INCOIS ocean bulletins.",
+                })
+
+    # -----------------------------------------------------------------------
+    # 3. SVAS / VESSEL SAFETY ALERTS
+    # -----------------------------------------------------------------------
+    svas_result = specialist_results.get("svas", {})
+    if isinstance(svas_result, dict) and svas_result.get("status") == "success":
+        advisory = svas_result.get("advisory") or {}
+        adv_msg = str(advisory.get("message") or "").strip()
+        adv_msg_lower = adv_msg.lower()
+        adv_sev = str(advisory.get("severity") or "").lower()
+        
+        if "should not sail" in adv_msg_lower or "do not sail" in adv_msg_lower or adv_sev == "danger":
+            alerts.append({
+                "type": "vessel",
+                "severity": "critical",
+                "title": "Vessel Sailing Restriction",
+                "message": adv_msg or "INCOIS SVAS advisory restricts sailing for this boat category.",
+                "source": "svas",
+                "action": "Do not sail. Small craft should remain safely in port.",
+            })
+        elif adv_sev in ["alert", "warning"]:
+            alerts.append({
+                "type": "vessel",
+                "severity": "high",
+                "title": "Small Vessel Advisory Active",
+                "message": adv_msg or "Official INCOIS Small Vessel Advisory is active for this boat size.",
+                "source": "svas",
+                "action": "Exercise extreme caution; small craft should avoid offshore waters.",
+            })
+        elif adv_sev in ["advisory", "caution"]:
+            alerts.append({
+                "type": "vessel",
+                "severity": "moderate",
+                "title": "Vessel Caution Advisory",
+                "message": adv_msg or "Precautionary advisory in effect for small motorized craft.",
+                "source": "svas",
+                "action": "Verify safety equipment and monitor changing sea conditions.",
+            })
+    elif isinstance(svas_result, dict) and svas_result.get("reason"):
+        reason = str(svas_result.get("reason"))
+        if "7m or wider" in reason:
+            alerts.append({
+                "type": "vessel",
+                "severity": "info",
+                "title": "Vessel Category Notice",
+                "message": "INCOIS SVAS service covers motorized craft under 7m width. Standard maritime navigation rules apply.",
+                "source": "svas",
+                "action": "Adhere to standard maritime safety and port clearance regulations.",
+            })
+
+    # -----------------------------------------------------------------------
+    # 4. GEOFENCING / RESTRICTED ZONES ALERTS
+    # -----------------------------------------------------------------------
+    geofence_keywords = [
+        "restricted", "geofenc", "no-go zone", "no go zone",
+        "no-fishing zone", "border", "imbl", "hazard zone", "dangerous zone",
+        "avoid", "zones should be avoided", "zones to avoid"
+    ]
+    if any(k in q_lower for k in geofence_keywords):
+        alerts.append({
+            "type": "geofence",
+            "severity": "high",
+            "title": "Restricted Maritime Zone Notice",
+            "message": "Do not cross International Maritime Boundary Lines (IMBL) or enter designated naval/marine protected areas.",
+            "source": "risk_engine",
+            "action": "Maintain GPS navigation watch and avoid restricted boundary corridors.",
+        })
+
+    # -----------------------------------------------------------------------
+    # 5. RISK ENGINE SAFETY ALERTS
+    # -----------------------------------------------------------------------
+    if isinstance(risk_result, dict):
+        risk_score = risk_result.get("risk_score")
+        risk_status = str(risk_result.get("status") or "").upper()
+        hard_override = risk_result.get("hard_override", False)
+        
+        if hard_override or (risk_score is not None and risk_score >= 80) or risk_status == "NOT_RECOMMENDED":
+            alerts.append({
+                "type": "risk",
+                "severity": "critical",
+                "title": "Critical Risk - Do Not Sail",
+                "message": f"ORCA Safety Assessment evaluates overall risk as CRITICAL (Risk Score: {risk_score if risk_score is not None else 100}/100).",
+                "source": "risk_engine",
+                "action": "Do not venture into the sea. High probability of dangerous marine conditions.",
+            })
+        elif (risk_score is not None and 60 <= risk_score < 80) or risk_status == "HIGH_RISK":
+            alerts.append({
+                "type": "risk",
+                "severity": "high",
+                "title": "High Risk Marine Assessment",
+                "message": f"ORCA Safety Assessment evaluates conditions as HIGH RISK (Risk Score: {risk_score}/100).",
+                "source": "risk_engine",
+                "action": "Reconsider trip. Small vessels should avoid venturing beyond sheltered waters.",
+            })
+
+    # -----------------------------------------------------------------------
+    # 6. DEDUPLICATION & UNIQUE ID GENERATION
+    # -----------------------------------------------------------------------
+    final_alerts: List[Dict[str, Any]] = []
+    seen = set()
+    
+    for a in alerts:
+        # Deduplicate based on type, severity, title, message, source
+        dedup_key = (
+            a["type"].strip().lower(),
+            a["severity"].strip().lower(),
+            a["title"].strip().lower(),
+            a["message"].strip().lower(),
+            a["source"].strip().lower(),
+        )
+        if dedup_key not in seen:
+            seen.add(dedup_key)
+            
+            # Generate deterministic stable unique alert ID
+            hash_input = f"{request_id}-{a['type']}-{a['severity']}-{a['title']}-{a['source']}"
+            hash_suffix = hashlib.md5(hash_input.encode("utf-8")).hexdigest()[:8]
+            alert_id = f"alert-{a['source']}-{hash_suffix}"
+            
+            final_alerts.append({
+                "id": alert_id,
+                "request_id": request_id,
+                "type": a["type"],
+                "severity": a["severity"],
+                "title": a["title"],
+                "message": a["message"],
+                "source": a["source"],
+                "timestamp": timestamp,
+                "action": a.get("action", "Proceed with caution."),
+            })
+
+    return final_alerts
+
+
+# ===========================================================================
 # FINAL RESPONSE NODE
 # ===========================================================================
 
@@ -1052,6 +1341,26 @@ def final_response_node(state: ORCAState) -> Dict[str, Any]:
     }
 
     final_dict.update(specialist_results)
+    
+    alerts = generate_deterministic_alerts(state, specialist_results, risk_result)
+    final_dict["alerts"] = alerts
+    
+    # Comprehensive Temporary Debug Logging
+    logger.info("=" * 70)
+    logger.info("[ORCA BACKEND ALERTS DEBUG]")
+    logger.info("  Request ID: %s", state.get("request_id"))
+    logger.info("  Current Query: %s", state.get("query"))
+    logger.info("  Latitude: %s, Longitude: %s", state.get("latitude"), state.get("longitude"))
+    logger.info("  Date: %s, Boat Size: %s m", state.get("date"), state.get("boat_width_m"))
+    logger.info("  Marine Weather Result: %s", specialist_results.get("marine_weather", {}).get("status", "N/A"))
+    logger.info("  Ocean Analysis Result: %s", specialist_results.get("ocean_analysis", {}).get("status", "N/A"))
+    logger.info("  SVAS Result: %s", specialist_results.get("svas", {}).get("status", "N/A"))
+    logger.info("  Risk Result: status=%s, score=%s, hard_override=%s", risk_result.get("status"), risk_result.get("risk_score"), risk_result.get("hard_override"))
+    logger.info("  Generated Alerts Count: %d", len(alerts))
+    for idx, a in enumerate(alerts, 1):
+        logger.info("    [%d] ID=%s | SEVERITY=%s | TYPE=%s | TITLE='%s' | SOURCE=%s", idx, a["id"], a["severity"].upper(), a["type"], a["title"], a["source"])
+    logger.info("  Final API Response alert IDs: %s", [a["id"] for a in alerts])
+    logger.info("=" * 70)
 
     return {
         "recommendation": recommendation,

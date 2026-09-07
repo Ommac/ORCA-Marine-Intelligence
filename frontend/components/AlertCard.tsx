@@ -10,34 +10,53 @@ import {
   Building2,
   AlertTriangle,
   CheckCircle2,
+  Anchor,
+  Gauge,
 } from 'lucide-react-native';
-import { Hazard } from '../types/orca';
+import { Alert } from '../types/orca';
 import { getSeverityTheme } from '../utils/formatting';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../constants/theme';
 
 interface AlertCardProps {
-  hazard: Hazard;
+  alert: Alert;
 }
 
-export const AlertCard: React.FC<AlertCardProps> = ({ hazard }) => {
-  const theme = getSeverityTheme(hazard.severity);
-  const isNone = hazard.severity === 'NONE';
+export const AlertCard: React.FC<AlertCardProps> = ({ alert }) => {
+  const theme = getSeverityTheme(alert.severity.toUpperCase());
 
-  const getHazardIcon = () => {
-    const typeLower = hazard.type.toLowerCase();
-    if (typeLower.includes('cyclone')) {
+  const getAlertIcon = () => {
+    const typeLower = alert.type.toLowerCase();
+    const titleLower = alert.title.toLowerCase();
+    if (titleLower.includes('cyclone')) {
       return <Flame size={24} color={theme.accentColor} strokeWidth={2.4} />;
     }
-    if (typeLower.includes('wave')) {
+    if (titleLower.includes('wave')) {
       return <Waves size={24} color={theme.accentColor} strokeWidth={2.4} />;
     }
-    if (typeLower.includes('surge')) {
+    if (titleLower.includes('wind') || titleLower.includes('gust')) {
       return <CloudRain size={24} color={theme.accentColor} strokeWidth={2.4} />;
     }
-    if (typeLower.includes('tsunami')) {
+    if (titleLower.includes('tsunami')) {
       return <Radio size={24} color={theme.accentColor} strokeWidth={2.4} />;
     }
+    if (typeLower === 'vessel') {
+      return <Anchor size={24} color={theme.accentColor} strokeWidth={2.4} />;
+    }
+    if (typeLower === 'risk') {
+      return <Gauge size={24} color={theme.accentColor} strokeWidth={2.4} />;
+    }
     return <ShieldAlert size={24} color={theme.accentColor} strokeWidth={2.4} />;
+  };
+
+  // Format source name for display
+  const formatSource = (source: string): string => {
+    const sourceMap: Record<string, string> = {
+      marine_weather: 'Marine Weather Assessment',
+      ocean_analysis: 'Ocean Analysis Agent',
+      svas: 'INCOIS SVAS Advisory',
+      risk_engine: 'ORCA Risk Engine',
+    };
+    return sourceMap[source] || source;
   };
 
   return (
@@ -46,7 +65,7 @@ export const AlertCard: React.FC<AlertCardProps> = ({ hazard }) => {
         styles.card,
         {
           borderColor: theme.borderColor,
-          backgroundColor: isNone ? COLORS.cardBg : theme.bgColor,
+          backgroundColor: theme.bgColor,
         },
       ]}
     >
@@ -58,45 +77,48 @@ export const AlertCard: React.FC<AlertCardProps> = ({ hazard }) => {
               { backgroundColor: theme.bgColor, borderColor: theme.borderColor },
             ]}
           >
-            {isNone ? (
-              <CheckCircle2 size={14} color={theme.accentColor} />
-            ) : (
-              <AlertTriangle size={14} color={theme.accentColor} />
-            )}
+            <AlertTriangle size={14} color={theme.accentColor} />
             <Text style={[styles.severityLabel, { color: theme.textColor }]}>
               {theme.label}
             </Text>
           </View>
         </View>
 
-        <View style={styles.iconCircle}>{getHazardIcon()}</View>
+        <View style={styles.iconCircle}>{getAlertIcon()}</View>
       </View>
 
       <Text style={[styles.title, { color: COLORS.textPrimary }]}>
-        {hazard.title}
+        {alert.title}
       </Text>
 
       <Text style={styles.description}>
-        {hazard.description}
+        {alert.message}
       </Text>
 
-      {(hazard.updated_at || hazard.source) && (
-        <View style={styles.footerRow}>
-          {hazard.updated_at && (
-            <View style={styles.footerItem}>
-              <Clock size={13} color={COLORS.textTertiary} />
-              <Text style={styles.footerText}>Updated: {hazard.updated_at}</Text>
-            </View>
-          )}
-
-          {hazard.source && (
-            <View style={styles.footerItem}>
-              <Building2 size={13} color={COLORS.textTertiary} />
-              <Text style={styles.footerText}>Source: {hazard.source}</Text>
-            </View>
-          )}
+      {alert.action && (
+        <View style={styles.actionBox}>
+          <Text style={styles.actionLabel}>⚓ RECOMMENDED ACTION</Text>
+          <Text style={styles.actionText}>{alert.action}</Text>
         </View>
       )}
+
+      <View style={styles.footerRow}>
+        {alert.source && (
+          <View style={styles.footerItem}>
+            <Building2 size={13} color={COLORS.textTertiary} />
+            <Text style={styles.footerText}>{formatSource(alert.source)}</Text>
+          </View>
+        )}
+
+        {alert.timestamp && (
+          <View style={styles.footerItem}>
+            <Clock size={13} color={COLORS.textTertiary} />
+            <Text style={styles.footerText}>
+              {new Date(alert.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </Text>
+          </View>
+        )}
+      </View>
     </View>
   );
 };
@@ -150,6 +172,26 @@ const styles = StyleSheet.create({
     ...TYPOGRAPHY.bodyMedium,
     color: COLORS.textSecondary,
     lineHeight: 21,
+  },
+  actionBox: {
+    marginTop: SPACING.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
+    borderLeftWidth: 3,
+    borderLeftColor: COLORS.oceanBlue,
+  },
+  actionLabel: {
+    ...TYPOGRAPHY.caption,
+    fontWeight: '800',
+    color: COLORS.oceanBlue,
+    marginBottom: 4,
+    letterSpacing: 0.3,
+  },
+  actionText: {
+    ...TYPOGRAPHY.bodyMedium,
+    color: COLORS.textPrimary,
+    lineHeight: 20,
   },
   footerRow: {
     flexDirection: 'row',

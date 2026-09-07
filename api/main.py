@@ -110,6 +110,17 @@ def assess_marine_conditions(payload: OrcaAssessRequest) -> Dict[str, Any]:
     - Evaluates deterministic risk via the Risk Agent
     - Generates conversational fisherman guidance via Gemini/deterministic synthesis
     """
+    import uuid
+    effective_req_id = payload.request_id or f"req-{uuid.uuid4().hex[:12]}"
+    
+    logger.info("=" * 70)
+    logger.info("[API INCOMING ASSESS REQUEST]")
+    logger.info("  Request ID: %s", effective_req_id)
+    logger.info("  Query: %s", payload.query)
+    logger.info("  Coordinates: (%.4f, %.4f)", payload.latitude, payload.longitude)
+    logger.info("  Date: %s, Boat Width: %.1f m", payload.date, payload.boat_width_m)
+    logger.info("=" * 70)
+
     try:
         assessment = orchestrate_orca_assessment(
             latitude=payload.latitude,
@@ -117,11 +128,11 @@ def assess_marine_conditions(payload: OrcaAssessRequest) -> Dict[str, Any]:
             date=payload.date,
             boat_width_m=payload.boat_width_m,
             query=payload.query,
-            request_id=payload.request_id,
+            request_id=effective_req_id,
         )
         return assessment
     except Exception as exc:
-        logger.error(f"Orchestrator invocation failed: {exc}", exc_info=True)
+        logger.error(f"Orchestrator invocation failed for req={effective_req_id}: {exc}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while formulating the ORCA assessment: {exc}",

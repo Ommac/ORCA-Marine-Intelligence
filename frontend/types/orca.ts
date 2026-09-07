@@ -4,7 +4,7 @@
  */
 
 export type AssessmentStatus = "SAFE" | "CAUTION" | "HIGH_RISK" | "NOT_RECOMMENDED";
-export type SeverityLevel = "HIGH" | "MEDIUM" | "LOW" | "NONE";
+export type SeverityLevel = "CRITICAL" | "HIGH" | "MODERATE" | "MEDIUM" | "LOW" | "INFO" | "NONE";
 export type SVASSeverity = "alert" | "safe" | "warning" | "advisory";
 
 export interface OrcaRequest {
@@ -79,6 +79,21 @@ export interface Hazard {
   direction?: string;
 }
 
+export type AlertType = "weather" | "ocean" | "vessel" | "geofence" | "risk";
+export type AlertSeverity = "critical" | "high" | "moderate" | "low" | "info";
+
+export interface Alert {
+  id: string;
+  request_id?: string;
+  type: AlertType;
+  severity: AlertSeverity;
+  title: string;
+  message: string;
+  source: string;
+  timestamp?: string;
+  action?: string;
+}
+
 export interface Meta {
   generated_at?: string;
   sources?: string[];
@@ -94,6 +109,7 @@ export interface OrcaResponse {
   marine: MarineData;
   svas: SVASData;
   hazards: Hazard[];
+  alerts: Alert[];
   meta: Meta;
   recommendation?: string;
 }
