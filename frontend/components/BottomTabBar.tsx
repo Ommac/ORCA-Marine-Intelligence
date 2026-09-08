@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Home, Map, Bell, MessageSquareQuote } from 'lucide-react-native';
-import { COLORS, TYPOGRAPHY, SPACING, SHADOWS } from '../constants/theme';
+import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../constants/theme';
 
 export interface CustomBottomTabBarProps {
   state: {
@@ -36,8 +36,8 @@ export const BottomTabBar: React.FC<CustomBottomTabBarProps> = ({
   navigation,
 }) => {
   const getTabIcon = (name: string, isFocused: boolean) => {
-    const color = isFocused ? COLORS.oceanBlue : COLORS.textSecondary;
-    const size = 24;
+    const color = isFocused ? COLORS.oceanBlue : COLORS.textTertiary;
+    const size = 22;
     const strokeWidth = isFocused ? 2.6 : 2.0;
 
     switch (name) {
@@ -71,59 +71,61 @@ export const BottomTabBar: React.FC<CustomBottomTabBarProps> = ({
 
   return (
     <View style={styles.container}>
-      <View style={styles.tabBar}>
-        {state.routes.map((route, index: number) => {
-          const descriptor = descriptors[route.key];
-          const options = descriptor?.options || {};
-          const isFocused = state.index === index;
-          const rawLabel = options.tabBarLabel !== undefined
-            ? options.tabBarLabel
-            : options.title !== undefined
-            ? options.title
-            : getTabLabel(route.name);
+      <View style={styles.innerWrapper}>
+        <View style={styles.tabBar}>
+          {state.routes.map((route, index: number) => {
+            const descriptor = descriptors[route.key];
+            const options = descriptor?.options || {};
+            const isFocused = state.index === index;
+            const rawLabel = options.tabBarLabel !== undefined
+              ? options.tabBarLabel
+              : options.title !== undefined
+              ? options.title
+              : getTabLabel(route.name);
 
-          const onPress = () => {
-            const event = navigation.emit({
-              type: 'tabPress',
-              target: route.key,
-              canPreventDefault: true,
-            });
+            const onPress = () => {
+              const event = navigation.emit({
+                type: 'tabPress',
+                target: route.key,
+                canPreventDefault: true,
+              });
 
-            if (!isFocused && !event?.defaultPrevented) {
-              navigation.navigate(route.name);
-            }
-          };
+              if (!isFocused && !event?.defaultPrevented) {
+                navigation.navigate(route.name);
+              }
+            };
 
-          return (
-            <TouchableOpacity
-              key={route.key}
-              accessibilityRole="button"
-              accessibilityState={isFocused ? { selected: true } : {}}
-              accessibilityLabel={options.tabBarAccessibilityLabel}
-              testID={options.tabBarTestID}
-              onPress={onPress}
-              style={[
-                styles.tabItem,
-                isFocused && styles.tabItemActive,
-              ]}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.iconWrapper, isFocused && styles.iconWrapperActive]}>
-                {getTabIcon(route.name, isFocused)}
-              </View>
-              <Text
+            return (
+              <TouchableOpacity
+                key={route.key}
+                accessibilityRole="button"
+                accessibilityState={isFocused ? { selected: true } : {}}
+                accessibilityLabel={options.tabBarAccessibilityLabel}
+                testID={options.tabBarTestID}
+                onPress={onPress}
                 style={[
-                  styles.tabLabel,
-                  isFocused ? styles.tabLabelActive : styles.tabLabelInactive,
+                  styles.tabItem,
+                  isFocused && styles.tabItemActive,
                 ]}
-                numberOfLines={1}
+                activeOpacity={0.7}
               >
-                {typeof rawLabel === 'string' ? rawLabel : getTabLabel(route.name)}
-              </Text>
-              {isFocused && <View style={styles.activePill} />}
-            </TouchableOpacity>
-          );
-        })}
+                <View style={styles.iconWrapper}>
+                  {getTabIcon(route.name, isFocused)}
+                </View>
+                <Text
+                  style={[
+                    styles.tabLabel,
+                    isFocused ? styles.tabLabelActive : styles.tabLabelInactive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {typeof rawLabel === 'string' ? rawLabel : getTabLabel(route.name)}
+                </Text>
+                {isFocused && <View style={styles.activePill} />}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
     </View>
   );
@@ -131,15 +133,21 @@ export const BottomTabBar: React.FC<CustomBottomTabBarProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: COLORS.cardBg,
+    backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
-    paddingBottom: 8,
+    paddingBottom: 6,
+    alignItems: 'center',
+    width: '100%',
     ...SHADOWS.md,
+  },
+  innerWrapper: {
+    width: '100%',
+    maxWidth: 1100,
   },
   tabBar: {
     flexDirection: 'row',
-    height: 64,
+    height: 60,
     alignItems: 'center',
     justifyContent: 'space-around',
     paddingHorizontal: SPACING.sm,
@@ -148,37 +156,35 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    height: 56,
-    borderRadius: 12,
+    height: 52,
+    borderRadius: RADIUS.md,
     position: 'relative',
   },
   tabItemActive: {
     backgroundColor: '#F0F9FF',
   },
   iconWrapper: {
-    marginBottom: 2,
-  },
-  iconWrapperActive: {
-    transform: [{ scale: 1.05 }],
+    marginBottom: 1,
   },
   tabLabel: {
     ...TYPOGRAPHY.caption,
-    fontSize: 12,
+    fontSize: 11,
+    marginTop: 1,
   },
   tabLabelActive: {
     color: COLORS.oceanBlue,
     fontWeight: '800',
   },
   tabLabelInactive: {
-    color: COLORS.textSecondary,
+    color: COLORS.textTertiary,
     fontWeight: '600',
   },
   activePill: {
     position: 'absolute',
     bottom: 2,
-    width: 16,
+    width: 14,
     height: 3,
-    borderRadius: 2,
+    borderRadius: 1.5,
     backgroundColor: COLORS.oceanBlue,
   },
 });

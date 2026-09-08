@@ -4,8 +4,46 @@
  */
 
 export type AssessmentStatus = "SAFE" | "CAUTION" | "HIGH_RISK" | "NOT_RECOMMENDED";
-export type SeverityLevel = "HIGH" | "MEDIUM" | "LOW" | "NONE";
+export type SeverityLevel = "CRITICAL" | "HIGH" | "MODERATE" | "MEDIUM" | "LOW" | "INFO" | "NONE";
 export type SVASSeverity = "alert" | "safe" | "warning" | "advisory";
+
+export interface PFZCandidate {
+  id: string;
+  rank: number;
+  label: string;
+  name?: string;
+  distance_km: number;
+  bearing_degrees?: number;
+  direction?: string;
+  coordinates: {
+    latitude: number;
+    longitude: number;
+  };
+  nearest_point?: PFZNearest;
+  geometry?: any;
+  category?: string;
+  uid?: string | number;
+  sno?: string | number;
+  data_year?: number;
+  julian_day?: number;
+  valid_until?: string | null;
+  recommended: boolean;
+  recommendation_reason?: string;
+}
+
+export interface UIAction {
+  type: "show_on_map" | "navigate_tab" | "highlight_hazard" | string;
+  target?: string;
+  rank?: number;
+  coordinates?: {
+    latitude: number;
+    longitude: number;
+  };
+  label?: string;
+  zoom?: number;
+  geometry?: any;
+  top_candidates?: PFZCandidate[];
+}
 
 export interface OrcaRequest {
   query?: string;
@@ -14,7 +52,8 @@ export interface OrcaRequest {
   date: string; // YYYY-MM-DD
   boat_width_m: number;
   request_id?: string;
-  mode?: 'trip_assessment' | 'chat_query' | string;
+  session_id?: string;
+  conversation_history?: Array<{ role: string; content: string }>;
 }
 
 export interface Assessment {
@@ -32,7 +71,7 @@ export interface PFZNearest {
 }
 
 export interface PFZGeometry {
-  type: "MultiLineString" | "LineString" | "Polygon" | "MultiPolygon" | string;
+  type: "Point" | "MultiPoint" | "MultiLineString" | "LineString" | "Polygon" | "MultiPolygon" | string;
   coordinates: any;
 }
 
@@ -40,7 +79,11 @@ export interface PFZData {
   available: boolean;
   nearest?: PFZNearest;
   geometry?: PFZGeometry;
+  metadata?: Record<string, unknown>;
   message?: string;
+  top_candidates?: PFZCandidate[];
+  selected_rank?: number;
+  total_candidates?: number;
 }
 
 export interface MarineData {
@@ -79,11 +122,78 @@ export interface Hazard {
   direction?: string;
 }
 
+export type AlertType = "weather" | "ocean" | "vessel" | "geofence" | "risk";
+export type AlertSeverity = "critical" | "high" | "moderate" | "low" | "info";
+
+export interface Alert {
+  id: string;
+  request_id?: string;
+  type: AlertType;
+  severity: AlertSeverity;
+  title: string;
+  message: string;
+  source: string;
+  timestamp?: string;
+  action?: string;
+}
+
 export interface Meta {
   generated_at?: string;
   sources?: string[];
   version?: string;
   request_id?: string;
+}
+
+export type RiskDecision = 'GO' | 'CAUTION' | 'DONT_GO';
+
+export interface RiskFactor {
+  id: string;
+  name: string;
+  value?: number | string | null;
+  unit?: string;
+  value_formatted: string;
+  status: 'safe' | 'caution' | 'danger' | 'unavailable';
+  status_label: string;
+  impact: 'low' | 'moderate' | 'high' | 'critical' | 'unknown';
+  reason: string;
+  interpretation?: string;
+  threshold_context?: string;
+  icon?: string;
+  is_critical?: boolean;
+}
+
+export interface ActionGuidance {
+  headline: string;
+  action_text: string;
+  urgency: 'normal' | 'caution' | 'immediate' | 'critical' | 'moderate' | 'routine';
+}
+
+export interface RiskExplanation {
+  decision: RiskDecision;
+  decision_label: string;
+  decision_subtitle: string;
+  risk_score: number;
+  status: AssessmentStatus;
+  dominant_hazard?: string | null;
+  primary_thing_to_watch?: string | null;
+  primary_thing_to_watch_reason?: string | null;
+  factors: RiskFactor[];
+  action_guidance: ActionGuidance;
+  vessel_evaluated?: string | boolean;
+  boat_width_m?: number;
+  data_quality?: string;
+  missing_factors?: string[];
+}
+
+export interface DisplayFlags {
+  pfz: boolean;
+  pfz_mode?: 'pfz_list' | 'single_pfz' | 'none';
+  risk_explanation?: boolean;
+  marine?: boolean;
+  svas?: boolean;
+  ocean_hazards?: boolean;
+  risk_assessment?: boolean;
+  map_action?: boolean;
 }
 
 export interface OrcaResponse {
@@ -94,15 +204,13 @@ export interface OrcaResponse {
   marine: MarineData;
   svas: SVASData;
   hazards: Hazard[];
+  alerts: Alert[];
   meta: Meta;
   recommendation?: string;
-  // Extended fields for alert system (additive)
-  explanation?: OrcaExplanation;
-  riskFactors?: RiskFactor[];
-  riskReasons?: string[];
-  lightning?: LightningData;
-  hardOverride?: boolean;
-  overrideReason?: string;
+  ui_action?: UIAction;
+  display?: DisplayFlags;
+  risk_explanation?: RiskExplanation;
+  top_pfz?: PFZCandidate[];
 }
 
 export interface PresetLocation {
@@ -119,88 +227,4 @@ export interface BoatSizeOption {
   label: string;
   sublabel: string;
   boat_width_m: number;
-}
-
-// ===========================================================================
-// Alert System Types
-// ===========================================================================
-
-export type AlertSeverityLevel = 'CRITICAL' | 'HIGH' | 'CAUTION' | 'INFORMATION' | 'SAFE';
-
-export type AlertStatus = 'active' | 'forecast' | 'informational' | 'unavailable';
-
-export type AlertCategory =
-  | 'boat_safety'
-  | 'weather'
-  | 'ocean_hazard'
-  | 'pfz_safety'
-  | 'forecast'
-  | 'lightning'
-  | 'geofence'
-  | 'route'
-  | 'tide';
-
-export interface AlertEvidence {
-  label: string;
-  value: string;
-  source?: string;
-  unit?: string;
-}
-
-export interface OrcaAlert {
-  id: string;
-  type: string;
-  severity: AlertSeverityLevel;
-  priority: number; // 0-100, higher = more important
-  title: string;
-  subtitle?: string;
-  location?: string;
-  distance?: string;
-  direction?: string;
-  validFrom?: string;
-  validUntil?: string;
-  evidence: AlertEvidence[];
-  advice: string;
-  source?: string;
-  status: AlertStatus;
-  category: AlertCategory;
-  icon?: string; // emoji icon
-  updatedAt?: string;
-}
-
-export interface OrcaExplanation {
-  summary?: string;
-  why?: string[];
-  key_conditions?: string[];
-  official_warnings?: string[];
-  data_limitations?: string[];
-  final_advice?: string;
-}
-
-export interface RiskFactor {
-  factor: string;
-  value: any;
-  unit: string;
-  risk: number;
-  weight: number;
-  base_weight: number;
-  contribution: number;
-}
-
-export interface LightningData {
-  available: boolean;
-  source?: string;
-  fallback_used?: boolean;
-  data?: {
-    thunderstorm_active?: boolean;
-    elevated_convective_risk?: boolean;
-    thunderstorm_forecast_today?: boolean;
-    weather_description?: string;
-    weather_code?: number;
-    convective_available_potential_energy_j_kg?: {
-      max_cape?: number;
-      instability_level?: string;
-    };
-  };
-  reason?: string;
 }

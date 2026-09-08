@@ -11,11 +11,17 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Send, User, Sparkles, Compass, RotateCcw, MapPin } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
+import { Send, User, Sparkles, Compass, RotateCcw, MapPin, Calendar, Ship, Waves, Map, Navigation } from 'lucide-react-native';
 import { OrcaHeader } from '../../components/OrcaHeader';
+import { PFZTopCards } from '../../components/PFZTopCards';
+import { RiskExplanationCard } from '../../components/RiskExplanationCard';
 import { queryOrcaAssistant } from '../../services/api';
 import { getActiveTrip, subscribeToTrip } from '../../services/tripStore';
+import { setMapFocus } from '../../services/mapFocusStore';
+import { formatDateToFisherman } from '../../utils/formatting';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
+import { UIAction, PFZCandidate, DisplayFlags, RiskExplanation } from '../../types/orca';
 
 interface ChatMessage {
   id: string;
@@ -24,15 +30,20 @@ interface ChatMessage {
   timestamp: string;
   isError?: boolean;
   retryQuery?: string;
+  ui_action?: UIAction;
+  top_candidates?: PFZCandidate[];
+  display?: DisplayFlags;
+  risk_explanation?: RiskExplanation;
 }
 
 export default function AskOrcaScreen() {
+  const router = useRouter();
   const [activeTrip, setActiveTrip] = useState(getActiveTrip());
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome-1',
       sender: 'orca',
-      text: 'Namaste! I am ORCA, your Marine Intelligence Assistant. Ask me anything about sea conditions, fishing zones, or boat safety before sailing.',
+      text: 'Namaste! I am ORCA, your Marine Intelligence Assistant. Ask me anything about sea conditions, fishing zones, wave safety, or boat advisories.',
       timestamp: 'Just now',
     },
   ]);
@@ -51,9 +62,15 @@ export default function AskOrcaScreen() {
     'Is it safe for me to go fishing today?',
     'Can I go fishing tomorrow?',
     'Where is the nearest fishing zone?',
-    'Are the waves safe today?',
-    'I have a 5m boat. Can I go tomorrow?',
+    'Tell me 2nd PFZ from my location',
+    'Are the waves safe for a 5m boat?',
   ];
+
+  const handleMapAction = (uiAction: UIAction) => {
+    if (!uiAction) return;
+    setMapFocus(uiAction);
+    router.push('/(tabs)/map');
+  };
 
   const handleSend = async (queryToSend?: string) => {
     const text = (queryToSend || inputText).trim();
@@ -71,25 +88,61 @@ export default function AskOrcaScreen() {
     setInputText('');
     setIsTyping(true);
 
+    // Build recent conversation history for backend context
+    const history = messages
+      .filter((m) => !m.isError)
+      .slice(-6)
+      .map((m) => ({
+        role: m.sender === 'orca' ? 'assistant' : 'user',
+        content: m.text,
+      }));
+
     try {
       const response = await queryOrcaAssistant(text, {
         latitude: activeTrip.location.latitude,
         longitude: activeTrip.location.longitude,
         date: activeTrip.date,
         boat_width_m: activeTrip.boatWidthM,
+        conversation_history: history,
       });
+
+      const displayFlags: DisplayFlags | undefined =
+        response.assessment?.display ||
+        response.rawBackendResponse?.display;
+
+      const shouldDisplayPFZ = Boolean(displayFlags?.pfz);
+      const shouldDisplayRiskExplanation = Boolean(displayFlags?.risk_explanation);
+
+      const topCands: PFZCandidate[] =
+        response.assessment?.top_pfz ||
+        response.rawBackendResponse?.top_pfz ||
+        response.assessment?.pfz?.top_candidates ||
+        response.rawBackendResponse?.pfz?.top_candidates ||
+        response.uiAction?.top_candidates ||
+        [];
+
+      const riskExpl: RiskExplanation | undefined =
+        response.assessment?.risk_explanation ||
+        response.rawBackendResponse?.risk_explanation ||
+        response.rawBackendResponse?.risk?.explanation_card ||
+        undefined;
+
       const orcaMessage: ChatMessage = {
         id: `orca-${response.requestId || Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         sender: 'orca',
         text: response.text,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        ui_action: response.uiAction,
+        top_candidates: shouldDisplayPFZ && topCands.length > 0 ? topCands : undefined,
+        risk_explanation: shouldDisplayRiskExplanation ? riskExpl : undefined,
+        display: displayFlags,
       };
       setMessages((prev) => [...prev, orcaMessage]);
     } catch (err: any) {
       const errorMessage: ChatMessage = {
         id: `err-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         sender: 'orca',
-        text: `Unable to connect to ORCA Backend: ${err?.message || 'Network error'}. Please verify the backend server is running.`,
+        text: `Unable to connect to ORCA Backend: ${err?.message || 'Network error'}. Please ensure the server is running.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         isError: true,
         retryQuery: text,
@@ -108,13 +161,37 @@ export default function AskOrcaScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <OrcaHeader
         title="Ask ORCA"
-        subtitle={`Active Spot: ${activeTrip.location.name} (${activeTrip.location.latitude.toFixed(2)}°N, ${activeTrip.location.longitude.toFixed(2)}°E)`}
+        subtitle="AI-Powered Maritime Advisory Assistant"
       />
 
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
+        {/* Active Trip Context Header Strip */}
+        <View style={styles.contextStrip}>
+          <View style={styles.contextPill}>
+            <MapPin size={12} color={COLORS.oceanBlue} />
+            <Text style={styles.contextPillText} numberOfLines={1}>
+              {activeTrip.location.name}
+            </Text>
+          </View>
+
+          <View style={styles.contextPill}>
+            <Calendar size={12} color={COLORS.oceanBlue} />
+            <Text style={styles.contextPillText}>
+              {formatDateToFisherman(activeTrip.date)}
+            </Text>
+          </View>
+
+          <View style={styles.contextPill}>
+            <Ship size={12} color={COLORS.oceanBlue} />
+            <Text style={styles.contextPillText}>
+              {activeTrip.boatWidthM}m Vessel
+            </Text>
+          </View>
+        </View>
+
         <ScrollView
           ref={scrollViewRef}
           style={styles.messagesContainer}
@@ -124,8 +201,8 @@ export default function AskOrcaScreen() {
           {/* Quick Suggestion Chips */}
           <View style={styles.suggestionsWrapper}>
             <View style={styles.suggestionsHeader}>
-              <Sparkles size={16} color={COLORS.oceanBlue} />
-              <Text style={styles.suggestionsTitle}>Suggested Questions</Text>
+              <Sparkles size={15} color={COLORS.oceanBlue} />
+              <Text style={styles.suggestionsTitle}>Quick Inquiries</Text>
             </View>
 
             <ScrollView
@@ -160,7 +237,7 @@ export default function AskOrcaScreen() {
               >
                 {!isUser && (
                   <View style={styles.botAvatar}>
-                    <Compass size={18} color="#0284C7" strokeWidth={2.5} />
+                    <Compass size={17} color="#0284C7" strokeWidth={2.6} />
                   </View>
                 )}
 
@@ -187,8 +264,47 @@ export default function AskOrcaScreen() {
                       onPress={() => handleSend(msg.retryQuery)}
                       activeOpacity={0.7}
                     >
-                      <RotateCcw size={14} color="#DC2626" />
+                      <RotateCcw size={13} color="#DC2626" />
                       <Text style={styles.retryText}>Retry Query</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Visual "WHY?" Risk Explanation Card - Only when display.risk_explanation is explicitly true */}
+                  {msg.display?.risk_explanation === true && msg.risk_explanation && (
+                    <RiskExplanationCard explanation={msg.risk_explanation} />
+                  )}
+
+                  {/* Top 3 or Single PFZ Recommendation Cards - Only when display.pfz is explicitly true */}
+                  {msg.display?.pfz === true && msg.top_candidates && msg.top_candidates.length > 0 && (
+                    <PFZTopCards
+                      candidates={msg.top_candidates}
+                      selectedRank={msg.ui_action?.rank || (msg.top_candidates.length === 1 ? msg.top_candidates[0].rank : 1)}
+                      onSelect={(cand) =>
+                        handleMapAction({
+                          type: 'show_on_map',
+                          target: 'pfz',
+                          rank: cand.rank,
+                          coordinates: cand.coordinates,
+                          label: cand.label || `PFZ ${cand.rank}`,
+                          geometry: cand.geometry,
+                          zoom: 11,
+                          top_candidates: msg.top_candidates,
+                        })
+                      }
+                    />
+                  )}
+
+                  {msg.ui_action && msg.ui_action.type === 'show_on_map' && (!msg.top_candidates || msg.top_candidates.length === 0) && (
+                    <TouchableOpacity
+                      style={styles.mapActionButton}
+                      onPress={() => handleMapAction(msg.ui_action!)}
+                      activeOpacity={0.8}
+                    >
+                      <Map size={14} color="#FFFFFF" />
+                      <Text style={styles.mapActionText}>
+                        {msg.ui_action.label ? `View ${msg.ui_action.label} on Map` : 'Show on Interactive Map'}
+                      </Text>
+                      <Navigation size={12} color="#93C5FD" />
                     </TouchableOpacity>
                   )}
 
@@ -204,7 +320,7 @@ export default function AskOrcaScreen() {
 
                 {isUser && (
                   <View style={styles.userAvatar}>
-                    <User size={18} color="#FFFFFF" />
+                    <User size={16} color="#FFFFFF" strokeWidth={2.5} />
                   </View>
                 )}
               </View>
@@ -215,11 +331,11 @@ export default function AskOrcaScreen() {
           {isTyping && (
             <View style={[styles.messageBubbleWrapper, styles.orcaBubbleWrapper]}>
               <View style={styles.botAvatar}>
-                <Compass size={18} color="#0284C7" strokeWidth={2.5} />
+                <Compass size={17} color="#0284C7" strokeWidth={2.6} />
               </View>
               <View style={[styles.messageBubble, styles.orcaBubble, styles.typingBubble]}>
                 <ActivityIndicator size="small" color={COLORS.oceanBlue} />
-                <Text style={styles.typingText}>ORCA is analyzing...</Text>
+                <Text style={styles.typingText}>ORCA AI is analyzing ocean models...</Text>
               </View>
             </View>
           )}
@@ -247,7 +363,7 @@ export default function AskOrcaScreen() {
             activeOpacity={0.8}
             accessibilityLabel="Send message"
           >
-            <Send size={20} color={COLORS.textInverse} />
+            <Send size={18} color={COLORS.textInverse} />
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -263,6 +379,36 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
+    width: '100%',
+    maxWidth: 1000,
+    alignSelf: 'center',
+  },
+  contextStrip: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 8,
+    backgroundColor: COLORS.cardBg,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  contextPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F9FF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: RADIUS.full,
+    borderWidth: 1,
+    borderColor: COLORS.skyBlueBorder,
+    gap: 4,
+  },
+  contextPillText: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+    fontSize: 11,
   },
   messagesContainer: {
     flex: 1,
@@ -284,6 +430,7 @@ const styles = StyleSheet.create({
     ...TYPOGRAPHY.caption,
     color: COLORS.textSecondary,
     fontWeight: '800',
+    letterSpacing: 0.3,
   },
   chipsRow: {
     gap: 8,
@@ -291,8 +438,8 @@ const styles = StyleSheet.create({
   questionChip: {
     backgroundColor: COLORS.cardBg,
     borderRadius: RADIUS.full,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingVertical: 7,
+    paddingHorizontal: 13,
     borderWidth: 1,
     borderColor: COLORS.skyBlueBorder,
     ...SHADOWS.sm,
@@ -325,9 +472,9 @@ const styles = StyleSheet.create({
     borderColor: '#BAE6FD',
   },
   userAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: COLORS.oceanBlue,
     justifyContent: 'center',
     alignItems: 'center',
@@ -366,7 +513,7 @@ const styles = StyleSheet.create({
   messageText: {
     ...TYPOGRAPHY.bodyLarge,
     fontSize: 14,
-    lineHeight: 22,
+    lineHeight: 21,
   },
   userMessageText: {
     color: COLORS.textInverse,
@@ -395,6 +542,24 @@ const styles = StyleSheet.create({
     ...TYPOGRAPHY.caption,
     color: '#DC2626',
     fontWeight: '700',
+  },
+  mapActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    backgroundColor: '#0284C7',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: RADIUS.md,
+    ...SHADOWS.sm,
+  },
+  mapActionText: {
+    ...TYPOGRAPHY.caption,
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12,
   },
   timestampText: {
     ...TYPOGRAPHY.caption,
@@ -429,9 +594,9 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   sendButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: COLORS.oceanBlue,
     justifyContent: 'center',
     alignItems: 'center',

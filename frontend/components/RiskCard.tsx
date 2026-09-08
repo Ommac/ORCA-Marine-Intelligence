@@ -15,16 +15,17 @@ export const RiskCard: React.FC<RiskCardProps> = ({ assessment }) => {
   }
 
   const statusTheme = getStatusTheme(assessment.status);
+  const score = Math.min(Math.max(assessment.risk_score || 0, 0), 100);
 
   const renderIcon = () => {
     switch (assessment.status) {
       case 'SAFE':
-        return <CheckCircle2 size={44} color={statusTheme.accentColor} strokeWidth={2.5} />;
+        return <CheckCircle2 size={36} color={statusTheme.accentColor} strokeWidth={2.6} />;
       case 'CAUTION':
-        return <AlertTriangle size={44} color={statusTheme.accentColor} strokeWidth={2.5} />;
+        return <AlertTriangle size={36} color={statusTheme.accentColor} strokeWidth={2.6} />;
       case 'NOT_RECOMMENDED':
       default:
-        return <AlertOctagon size={44} color={statusTheme.accentColor} strokeWidth={2.5} />;
+        return <AlertOctagon size={36} color={statusTheme.accentColor} strokeWidth={2.6} />;
     }
   };
 
@@ -47,10 +48,36 @@ export const RiskCard: React.FC<RiskCardProps> = ({ assessment }) => {
           </Text>
 
           <View style={styles.scoreRow}>
-            <Text style={[styles.scoreBadge, { color: statusTheme.textColor }]}>
-              {statusTheme.subtitle} • {assessment.risk_score}/100
-            </Text>
+            <View
+              style={[
+                styles.scorePill,
+                { backgroundColor: 'rgba(255, 255, 255, 0.9)', borderColor: statusTheme.borderColor },
+              ]}
+            >
+              <Text style={[styles.scoreBadge, { color: statusTheme.textColor }]}>
+                {statusTheme.subtitle} • {score}/100 Risk Score
+              </Text>
+            </View>
           </View>
+        </View>
+      </View>
+
+      {/* Visual Risk Progress Bar */}
+      <View style={styles.meterContainer}>
+        <View style={styles.meterTrack}>
+          <View
+            style={[
+              styles.meterFill,
+              {
+                width: `${score}%`,
+                backgroundColor: statusTheme.accentColor,
+              },
+            ]}
+          />
+        </View>
+        <View style={styles.meterLabels}>
+          <Text style={styles.meterLabelText}>0 (Low Risk)</Text>
+          <Text style={styles.meterLabelText}>100 (Critical)</Text>
         </View>
       </View>
 
@@ -67,40 +94,71 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: RADIUS.xl,
     padding: SPACING.lg,
-    marginVertical: SPACING.md,
+    marginVertical: SPACING.sm,
     borderWidth: 2,
     ...SHADOWS.md,
   },
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 14,
   },
   iconWrapper: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.5)',
   },
   statusCol: {
     flex: 1,
   },
   statusText: {
     ...TYPOGRAPHY.heroBadge,
-    fontSize: 26,
+    fontSize: 22,
+    letterSpacing: 0.3,
   },
   scoreRow: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 4,
   },
+  scorePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: RADIUS.full,
+    borderWidth: 1,
+  },
   scoreBadge: {
     ...TYPOGRAPHY.caption,
-    fontSize: 13,
+    fontSize: 11.5,
     fontWeight: '800',
-    letterSpacing: 0.5,
+  },
+  meterContainer: {
+    marginTop: SPACING.md,
+  },
+  meterTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(0, 0, 0, 0.08)',
+    overflow: 'hidden',
+  },
+  meterFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  meterLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 3,
+  },
+  meterLabelText: {
+    ...TYPOGRAPHY.caption,
+    fontSize: 10,
+    color: COLORS.textTertiary,
   },
   divider: {
     height: 1,
@@ -109,8 +167,8 @@ const styles = StyleSheet.create({
   },
   summaryText: {
     ...TYPOGRAPHY.bodyLarge,
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 14.5,
+    lineHeight: 21,
     fontWeight: '600',
   },
 });

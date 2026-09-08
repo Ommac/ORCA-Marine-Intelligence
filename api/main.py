@@ -74,7 +74,8 @@ class OrcaAssessRequest(BaseModel):
     date: str = Field(..., description="Requested target date in YYYY-MM-DD format.")
     boat_width_m: float = Field(..., gt=0.0, description="Vessel width in meters.")
     request_id: Optional[str] = Field(None, description="Client request UUID for correlation.")
-    mode: Optional[str] = Field("trip_assessment", description="Request mode: 'trip_assessment' or 'chat_query'")
+    session_id: Optional[str] = Field(None, description="Conversational session ID for multi-turn context.")
+    conversation_history: Optional[list[dict[str, Any]]] = Field(None, description="Recent conversation history turns.")
 
     model_config = {
         "json_schema_extra": {
@@ -85,7 +86,7 @@ class OrcaAssessRequest(BaseModel):
                 "date": "2026-09-04",
                 "boat_width_m": 5.0,
                 "request_id": "req-12345",
-                "mode": "trip_assessment",
+                "session_id": "sess-user-1",
             }
         }
     }
@@ -107,11 +108,24 @@ def health_check() -> Dict[str, str]:
 @app.post("/api/orca/assess", status_code=status.HTTP_200_OK)
 def assess_marine_conditions(payload: OrcaAssessRequest) -> Dict[str, Any]:
     """
-    Perform a full ORCA marine assessment by invoking the existing Orchestrator:
-    - Calls all 4 specialist agents (PFZ, Marine Weather, SVAS, Ocean Analysis)
+    Perform a full ORCA marine assessment or conversational query by invoking the Orchestrator:
+    - Maintains conversational session memory and context across turns
+    - Ranks and resolves ordinal entities (e.g. 2nd nearest PFZ)
+    - Emits structured map / UI actions (show_on_map)
     - Evaluates deterministic risk via the Risk Agent
     - Generates conversational fisherman guidance via Gemini/deterministic synthesis
     """
+    import uuid
+    effective_req_id = payload.request_id or f"req-{uuid.uuid4().hex[:12]}"
+    
+    logger.info("=" * 70)
+    logger.info("[API INCOMING ASSESS REQUEST]")
+    logger.info("  Session ID: %s | Request ID: %s", payload.session_id, effective_req_id)
+    logger.info("  Query: %s", payload.query)
+    logger.info("  Coordinates: (%.4f, %.4f)", payload.latitude, payload.longitude)
+    logger.info("  Date: %s, Boat Width: %.1f m", payload.date, payload.boat_width_m)
+    logger.info("=" * 70)
+
     try:
         assessment = orchestrate_orca_assessment(
             latitude=payload.latitude,
@@ -119,12 +133,13 @@ def assess_marine_conditions(payload: OrcaAssessRequest) -> Dict[str, Any]:
             date=payload.date,
             boat_width_m=payload.boat_width_m,
             query=payload.query,
-            request_id=payload.request_id,
-            mode=payload.mode,
+            request_id=effective_req_id,
+            session_id=payload.session_id,
+            conversation_history=payload.conversation_history,
         )
         return assessment
     except Exception as exc:
-        logger.error(f"Orchestrator invocation failed: {exc}", exc_info=True)
+        logger.error(f"Orchestrator invocation failed for req={effective_req_id}: {exc}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while formulating the ORCA assessment: {exc}",

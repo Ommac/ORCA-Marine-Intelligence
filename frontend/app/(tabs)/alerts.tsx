@@ -1,91 +1,89 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Anchor, Construction, Navigation } from 'lucide-react-native';
+import { Bell, ShieldAlert, Radio, AlertOctagon, ShieldCheck, Info, MapPin, Calendar, Ship } from 'lucide-react-native';
 import { OrcaHeader } from '../../components/OrcaHeader';
-import { AlertContextHeader } from '../../components/alerts/AlertContextHeader';
-import { AlertSummaryBanner } from '../../components/alerts/AlertSummaryBanner';
-import { PersonalizedBoatAlert } from '../../components/alerts/PersonalizedBoatAlert';
-import { ActiveAlertCard } from '../../components/alerts/ActiveAlertCard';
-import { ForecastRiskSection } from '../../components/alerts/ForecastRiskSection';
-import { FutureFeaturePlaceholder } from '../../components/alerts/FutureFeaturePlaceholder';
+import { AlertCard } from '../../components/AlertCard';
+import { SVASCard } from '../../components/SVASCard';
 import { EmptyState } from '../../components/EmptyState';
+import { ResponsiveContainer } from '../../components/ResponsiveContainer';
 import {
   getCurrentAssessment,
   subscribeToAssessment,
 } from '../../services/api';
-import {
-  getActiveTrip,
-  subscribeToTrip,
-  ActiveTripState,
-} from '../../services/tripStore';
-import { OrcaResponse } from '../../types/orca';
-import { generateAlerts, categorizeAlerts, countAlertsBySeverity } from '../../utils/alertEngine';
-import { COLORS, TYPOGRAPHY, SPACING } from '../../constants/theme';
+import { getActiveTrip, subscribeToTrip } from '../../services/tripStore';
+import { OrcaResponse, Alert } from '../../types/orca';
+import { formatDateToFisherman } from '../../utils/formatting';
+import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
 
-/**
- * Validates that the assessment response matches the current active trip context
- * (location coordinates, date, and boat size).
- */
-function isAssessmentValidForTrip(data: OrcaResponse | null, trip: ActiveTripState): boolean {
-  if (!data || !data.request) return false;
+// Severity ordering for display (critical first)
+const SEVERITY_ORDER: Record<string, number> = {
+  critical: 0,
+  high: 1,
+  moderate: 2,
+  low: 3,
+  info: 4,
+};
 
-  const reqLat = data.request.latitude;
-  const reqLon = data.request.longitude;
-
-  if (typeof reqLat !== 'number' || typeof reqLon !== 'number') return false;
-
-  // Check coordinates match selected location (tolerance 0.05 degrees ~ 5.5 km)
-  const isLocMatch =
-    Math.abs(reqLat - trip.location.latitude) < 0.05 &&
-    Math.abs(reqLon - trip.location.longitude) < 0.05;
-
-  // Check date match
-  const isDateMatch = !data.request.date || data.request.date === trip.date;
-
-  // Check boat width match
-  const isBoatMatch =
-    !data.request.boat_width_m ||
-    Math.abs(data.request.boat_width_m - trip.boatWidthM) < 0.1;
-
-  return isLocMatch && isDateMatch && isBoatMatch;
+function sortAlertsBySeverity(alerts: Alert[]): Alert[] {
+  return [...alerts].sort((a, b) => {
+    const orderA = SEVERITY_ORDER[a.severity] ?? 5;
+    const orderB = SEVERITY_ORDER[b.severity] ?? 5;
+    return orderA - orderB;
+  });
 }
 
 export default function AlertsScreen() {
-  const [data, setData] = useState<OrcaResponse | null>(getCurrentAssessment());
-  const [trip, setTrip] = useState<ActiveTripState>(getActiveTrip());
+  const [activeTrip, setActiveTrip] = useState(getActiveTrip());
+  const [data, setData] = useState<OrcaResponse>(getCurrentAssessment());
+  const [prevAlerts, setPrevAlerts] = useState<Alert[]>([]);
 
   useEffect(() => {
-    const unsubAssessment = subscribeToAssessment((updated) => {
-      setData(updated);
+    const unsubTrip = subscribeToTrip((trip) => {
+      setActiveTrip(trip);
     });
-    const unsubTrip = subscribeToTrip((updatedTrip) => {
-      setTrip(updatedTrip);
+    const unsubAssessment = subscribeToAssessment((updated) => {
+      setData((current) => {
+        setPrevAlerts(current.alerts || []);
+        return updated;
+      });
     });
     return () => {
-      unsubAssessment();
       unsubTrip();
+      unsubAssessment();
     };
   }, []);
 
-  const hasValidAssessment = isAssessmentValidForTrip(data, trip);
-  const validData = hasValidAssessment ? data : null;
+  const currentRequestId = data.request_id || data.meta?.request_id;
+  const rawAlerts = data.alerts || [];
 
-  // Generate alerts only when a valid assessment exists for the current trip selection
-  const allAlerts = validData ? generateAlerts(validData, trip) : [];
-  const categorized = categorizeAlerts(allAlerts);
-  const alertCounts = countAlertsBySeverity(allAlerts);
-  const totalActiveAlerts = categorized.active.length;
+  // Deduplicate before rendering based on type + severity + title + message + source
+  const seenKeys = new Set<string>();
+  const dedupedAlerts: Alert[] = [];
+  for (const a of rawAlerts) {
+    if (currentRequestId && a.request_id && a.request_id !== currentRequestId) {
+      continue;
+    }
+    const key = `${a.type.toLowerCase()}|${a.severity.toLowerCase()}|${a.title.toLowerCase()}|${a.message.toLowerCase()}|${a.source.toLowerCase()}`;
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      dedupedAlerts.push(a);
+    }
+  }
 
-  // Find the personalized boat alert (SVAS)
-  const boatAlert = allAlerts.find(a => a.type === 'svas_boat');
-  const activeAlertsWithoutBoat = categorized.active.filter(a => a.type !== 'svas_boat');
+  const sortedAlerts = sortAlertsBySeverity(dedupedAlerts);
+  const hasAssessmentRun = !!currentRequestId || Boolean(data.marine?.available || data.assessment?.summary);
+
+  // Count active high/critical alerts
+  const activeWarningCount = sortedAlerts.filter(
+    (a) => a.severity === 'critical' || a.severity === 'high'
+  ).length + (data.svas?.severity?.toLowerCase() === 'alert' || data.svas?.severity?.toLowerCase() === 'danger' ? 1 : 0);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <OrcaHeader
         title="Alerts & Warnings"
-        subtitle="Marine Safety Decision Support"
+        subtitle="Official Coastal Safety Advisories"
       />
 
       <ScrollView
@@ -93,116 +91,97 @@ export default function AlertsScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* 1. Selected Location Context Header */}
-        <AlertContextHeader
-          locationName={trip.location.name}
-          date={trip.date}
-          boatWidthM={trip.boatWidthM}
-          district={trip.location.district}
-          state={trip.location.state}
-        />
+        <ResponsiveContainer>
+          {/* Selected Fishing Location Context Strip */}
+        <View style={styles.contextStrip}>
+          <View style={styles.contextPill}>
+            <MapPin size={13} color={COLORS.oceanBlue} />
+            <Text style={styles.contextPillText} numberOfLines={1}>
+              {activeTrip.location.name}
+            </Text>
+          </View>
 
-        {!hasValidAssessment || !validData ? (
-          /* Empty / Unavailable state when backend is offline or no assessment exists for selection */
-          <EmptyState
-            title="Current Marine Assessment Unavailable"
-            message="No active marine assessment found for your selected fishing location and date. Please tap 'Check Conditions' from the Home screen."
-          />
-        ) : (
-          /* Render current live assessment alerts */
-          <>
-            {/* 2. Alert Summary Banner */}
-            <AlertSummaryBanner
-              assessmentStatus={validData.assessment.status}
-              riskScore={validData.assessment.risk_score}
-              alertCounts={alertCounts}
-              totalActiveAlerts={totalActiveAlerts}
-            />
+          <View style={styles.contextPill}>
+            <Calendar size={13} color={COLORS.oceanBlue} />
+            <Text style={styles.contextPillText}>
+              {formatDateToFisherman(activeTrip.date)}
+            </Text>
+          </View>
 
-            {/* 3. Personalized Boat Status */}
-            {boatAlert && (
-              <View>
-                <Text style={styles.sectionHeader}>🚤  Your Boat Status</Text>
-                <PersonalizedBoatAlert
-                  alert={boatAlert}
-                  boatWidthM={trip.boatWidthM}
-                />
-              </View>
+          <View style={styles.contextPill}>
+            <Ship size={13} color={COLORS.oceanBlue} />
+            <Text style={styles.contextPillText}>
+              {activeTrip.boatWidthM}m Vessel
+            </Text>
+          </View>
+        </View>
+
+        {/* Active Alert Summary Banner */}
+        <View
+          style={[
+            styles.bannerCard,
+            activeWarningCount > 0 ? styles.bannerCardWarning : styles.bannerCardSafe,
+          ]}
+        >
+          <View style={styles.bannerIconBox}>
+            {activeWarningCount > 0 ? (
+              <AlertOctagon size={26} color={COLORS.danger} />
+            ) : (
+              <ShieldCheck size={26} color={COLORS.safe} />
             )}
+          </View>
+          <View style={styles.bannerTextCol}>
+            <Text
+              style={[
+                styles.bannerTitle,
+                activeWarningCount > 0 ? styles.bannerTitleWarning : styles.bannerTitleSafe,
+              ]}
+            >
+              {!hasAssessmentRun
+                ? 'Ready for Assessment'
+                : activeWarningCount > 0
+                  ? `${activeWarningCount} Active Warning${activeWarningCount > 1 ? 's' : ''}`
+                  : 'All Clear – No Severe Hazards'}
+            </Text>
+            <Text style={styles.bannerSubtitle}>
+              {hasAssessmentRun
+                ? 'Monitored continuously via INCOIS, IMD & Maritime Safety Network'
+                : 'Run "Check Marine Conditions" on the Home screen to evaluate live advisories'}
+            </Text>
+          </View>
+        </View>
 
-            {/* 4. Active Alerts Section */}
-            {activeAlertsWithoutBoat.length > 0 && (
-              <View>
-                <Text style={styles.sectionHeader}>🚨  Active Alerts</Text>
-                {activeAlertsWithoutBoat.map((alert) => (
-                  <ActiveAlertCard key={alert.id} alert={alert} />
-                ))}
-              </View>
-            )}
-
-            {/* 5. Forecast Risks Section */}
-            {categorized.forecast.length > 0 && (
-              <ForecastRiskSection alerts={categorized.forecast} />
-            )}
-
-            {/* 6. Status Updates */}
-            {categorized.informational.length > 0 && (
-              <View>
-                <Text style={[styles.sectionHeader, { marginTop: SPACING.md }]}>
-                  📋  Status Updates
-                </Text>
-                {categorized.informational.map((alert) => (
-                  <ActiveAlertCard key={alert.id} alert={alert} />
-                ))}
-              </View>
-            )}
-
-            {/* 7. Safe confirmations */}
-            {categorized.safe.length > 0 && totalActiveAlerts === 0 && categorized.forecast.length === 0 && (
-              <View>
-                <Text style={[styles.sectionHeader, { marginTop: SPACING.md }]}>
-                  ✅  All Clear
-                </Text>
-                {categorized.safe.map((alert) => (
-                  <ActiveAlertCard key={alert.id} alert={alert} />
-                ))}
-              </View>
-            )}
-
-            {/* 8. Empty State — no alerts for this valid assessment */}
-            {allAlerts.length === 0 && (
-              <EmptyState
-                title="No Active Alerts"
-                message="No severe weather or marine alerts reported for this location and date."
-              />
-            )}
-          </>
+        {/* 1. Dedicated Small Vessel Advisory (SVAS) */}
+        {hasAssessmentRun && (
+          <View style={styles.sectionBlock}>
+            <Text style={styles.sectionHeader}>Small Vessel Advisory Service</Text>
+            <SVASCard svas={data.svas} dateStr={data.request?.date || activeTrip.date} />
+          </View>
         )}
 
-        {/* 9. Future Navigation Safety Placeholders */}
-        <View>
-          <Text style={[styles.sectionHeader, { marginTop: SPACING.lg }]}>
-            🗺  Navigation Safety
+        {/* 2. Backend-generated Maritime Alerts */}
+        <View style={styles.sectionBlock}>
+          <Text style={styles.sectionHeader}>
+            Marine Safety Alerts {sortedAlerts.length > 0 ? `(${sortedAlerts.length})` : ''}
           </Text>
-          <Text style={styles.sectionSubtitle}>
-            Future features — will activate when data sources are available
-          </Text>
-          <FutureFeaturePlaceholder
-            title="Geofence Monitoring"
-            description="Maritime boundary and restricted zone alerts will be available when boundary data and navigation tracking are enabled."
-            icon={<Construction size={18} color={COLORS.neutral} />}
-          />
-          <FutureFeaturePlaceholder
-            title="Tide Information"
-            description="High/low tide times and tidal current warnings will be available when tide data integration is completed."
-            icon={<Anchor size={18} color={COLORS.neutral} />}
-          />
-          <FutureFeaturePlaceholder
-            title="Route Safety"
-            description="Route hazard analysis along your path to fishing zones will be available when route optimization is implemented."
-            icon={<Navigation size={18} color={COLORS.neutral} />}
-          />
+
+          {!hasAssessmentRun ? (
+            <EmptyState
+              title="No Assessment Available"
+              message="Check marine conditions from the Home screen to generate localized safety alerts for your vessel."
+            />
+          ) : sortedAlerts.length > 0 ? (
+            sortedAlerts.map((alert) => (
+              <AlertCard key={alert.id} alert={alert} />
+            ))
+          ) : (
+            <EmptyState
+              title="No Active Alerts"
+              message="No critical marine alerts or emergency hazard warnings detected for the current assessment. Conditions appear within normal operational limits."
+            />
+          )}
         </View>
+        </ResponsiveContainer>
       </ScrollView>
     </SafeAreaView>
   );
@@ -219,18 +198,84 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: SPACING.md,
-    paddingBottom: 40,
+    paddingBottom: 48,
+  },
+  contextStrip: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: SPACING.md,
+  },
+  contextPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.cardBg,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: RADIUS.full,
+    borderWidth: 1,
+    borderColor: COLORS.skyBlueBorder,
+    gap: 5,
+    ...SHADOWS.sm,
+  },
+  contextPillText: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+    fontSize: 11.5,
+  },
+  bannerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: SPACING.md,
+    borderRadius: RADIUS.xl,
+    marginBottom: SPACING.md,
+    gap: 14,
+    borderWidth: 1.5,
+    ...SHADOWS.sm,
+  },
+  bannerCardWarning: {
+    backgroundColor: '#FFF1F2',
+    borderColor: '#FECDD3',
+  },
+  bannerCardSafe: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  bannerIconBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bannerTextCol: {
+    flex: 1,
+  },
+  bannerTitle: {
+    ...TYPOGRAPHY.h3,
+    fontSize: 16.5,
+  },
+  bannerTitleWarning: {
+    color: COLORS.danger,
+  },
+  bannerTitleSafe: {
+    color: COLORS.safe,
+  },
+  bannerSubtitle: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  sectionBlock: {
+    marginTop: SPACING.sm,
   },
   sectionHeader: {
     ...TYPOGRAPHY.bodyLarge,
     color: COLORS.textPrimary,
     fontWeight: '800',
-    marginTop: SPACING.sm,
-    marginBottom: SPACING.sm,
-  },
-  sectionSubtitle: {
-    ...TYPOGRAPHY.caption,
-    color: COLORS.textTertiary,
-    marginBottom: SPACING.sm,
+    marginVertical: SPACING.xs,
   },
 });

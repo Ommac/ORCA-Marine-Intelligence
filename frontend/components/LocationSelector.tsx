@@ -89,7 +89,7 @@ export const LocationSelector: React.FC<LocationSelectorProps> = ({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.chipsScroll}
       >
-        {PRESET_LOCATIONS.slice(0, 5).map((preset) => {
+        {PRESET_LOCATIONS.map((preset) => {
           const isSelected =
             Math.abs(preset.latitude - selectedLocation.latitude) < 0.01 &&
             Math.abs(preset.longitude - selectedLocation.longitude) < 0.01;

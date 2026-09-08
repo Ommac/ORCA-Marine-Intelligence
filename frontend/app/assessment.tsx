@@ -19,11 +19,13 @@ import {
 } from 'lucide-react-native';
 import { OrcaHeader } from '../components/OrcaHeader';
 import { RiskCard } from '../components/RiskCard';
+import { RiskExplanationCard } from '../components/RiskExplanationCard';
 import { PFZCard } from '../components/PFZCard';
 import { MarineConditionsCard } from '../components/MarineConditionsCard';
 import { SVASCard } from '../components/SVASCard';
 import { HazardCard } from '../components/HazardCard';
 import { EmptyState } from '../components/EmptyState';
+import { ResponsiveContainer } from '../components/ResponsiveContainer';
 import {
   getCurrentAssessment,
   subscribeToAssessment,
@@ -36,7 +38,7 @@ import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../constants/theme
 export default function AssessmentScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const [data, setData] = useState<OrcaResponse | null>(getCurrentAssessment());
+  const [data, setData] = useState<OrcaResponse>(getCurrentAssessment());
 
   useEffect(() => {
     // Keep synced with centralized active session
@@ -47,7 +49,6 @@ export default function AssessmentScreen() {
   }, []);
 
   const handleShare = async () => {
-    if (!data) return;
     try {
       await Share.share({
         message: `ORCA Marine Assessment for ${data.request?.date || 'Today'}: Overall condition is ${data.assessment.status} (Risk Score: ${data.assessment.risk_score}/100). Nearest Fishing Zone: ${data.pfz.nearest?.distance_km ?? 'N/A'} km away.`,
@@ -83,53 +84,50 @@ export default function AssessmentScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {!data ? (
-          <EmptyState
-            title="Assessment Unavailable"
-            message="No active marine assessment found. Please tap 'Check Conditions' from the Home screen."
-          />
-        ) : (
-          <>
-            {/* Selected Trip Parameters Chips */}
-            <View style={styles.tripSummaryRow}>
-              <View style={styles.tripChip}>
-                <MapPin size={14} color={COLORS.oceanBlue} />
-                <Text style={styles.tripChipText} numberOfLines={1}>
-                  {params.locationName || `${data.request?.latitude?.toFixed(2)}°N, ${data.request?.longitude?.toFixed(2)}°E`}
-                </Text>
-              </View>
-
-              <View style={styles.tripChip}>
-                <Calendar size={14} color={COLORS.oceanBlue} />
-                <Text style={styles.tripChipText}>
-                  {formatDateToFisherman(data.request?.date || getTodayDateISO())}
-                </Text>
-              </View>
-
-              <View style={styles.tripChip}>
-                <Ship size={14} color={COLORS.oceanBlue} />
-                <Text style={styles.tripChipText}>
-                  {data.request?.boat_width_m ? `${data.request.boat_width_m} m Boat` : '5 m Boat'}
-                </Text>
-              </View>
+        <ResponsiveContainer>
+          {/* Selected Trip Parameters Chips */}
+          <View style={styles.tripSummaryRow}>
+            <View style={styles.tripChip}>
+              <MapPin size={14} color={COLORS.oceanBlue} />
+              <Text style={styles.tripChipText} numberOfLines={1}>
+                {params.locationName || `${data.request?.latitude?.toFixed(2)}°N, ${data.request?.longitude?.toFixed(2)}°E`}
+              </Text>
             </View>
 
-            {/* 1. Large Status & Risk Card */}
-            <RiskCard assessment={data.assessment} />
+            <View style={styles.tripChip}>
+              <Calendar size={14} color={COLORS.oceanBlue} />
+              <Text style={styles.tripChipText}>
+                {formatDateToFisherman(data.request?.date || getTodayDateISO())}
+              </Text>
+            </View>
 
-            {/* 2. Potential Fishing Zone (PFZ) Card */}
-            <PFZCard pfz={data.pfz} onViewOnMap={handleViewOnMap} />
+            <View style={styles.tripChip}>
+              <Ship size={14} color={COLORS.oceanBlue} />
+              <Text style={styles.tripChipText}>
+                {data.request?.boat_width_m ? `${data.request.boat_width_m} m Boat` : '5 m Boat'}
+              </Text>
+            </View>
+          </View>
 
-            {/* 3. Sea Conditions Grid Card */}
-            <MarineConditionsCard marine={data.marine} />
+          {/* 1. Large Status & Risk Card */}
+          <RiskCard assessment={data.assessment} />
 
-            {/* 4. Small Vessel Advisory (SVAS) Card */}
-            <SVASCard svas={data.svas} dateStr={data.request?.date} />
+          {/* 2. Potential Fishing Zone (PFZ) Card */}
+          <PFZCard pfz={data.pfz} onViewOnMap={handleViewOnMap} />
 
-            {/* 5. Hazards & Emergency Warning Checklist */}
-            <HazardCard hazards={data.hazards} />
+          {/* 3. Sea Conditions Grid Card */}
+          <MarineConditionsCard marine={data.marine} />
 
-            {/* 6. "Why this result?" Fisherman Explanation Card */}
+          {/* 4. Small Vessel Advisory (SVAS) Card */}
+          <SVASCard svas={data.svas} dateStr={data.request?.date} />
+
+          {/* 5. Hazards & Emergency Warning Checklist */}
+          <HazardCard hazards={data.hazards} />
+
+          {/* 6. Visual "WHY?" Risk Explanation Card or Fallback */}
+          {data.risk_explanation ? (
+            <RiskExplanationCard explanation={data.risk_explanation} />
+          ) : (
             <View style={styles.explanationCard}>
               <View style={styles.explanationHeader}>
                 <HelpCircle size={20} color={COLORS.oceanBlue} />
@@ -140,18 +138,18 @@ export default function AssessmentScreen() {
                   'ORCA analyzed combined oceanographic factors including wave height, wind speeds, distance to high-chlorophyll fishing zones, and active government advisories from INCOIS to produce this recommendation.'}
               </Text>
             </View>
-          </>
-        )}
+          )}
 
-        {/* Bottom CTA to open full map */}
-        <TouchableOpacity
-          style={styles.fullMapCTA}
-          onPress={handleViewOnMap}
-          activeOpacity={0.85}
-        >
-          <MapIcon size={22} color={COLORS.textInverse} />
-          <Text style={styles.fullMapCTAText}>OPEN INTERACTIVE MAP</Text>
-        </TouchableOpacity>
+          {/* Bottom CTA to open full map */}
+          <TouchableOpacity
+            style={styles.fullMapCTA}
+            onPress={handleViewOnMap}
+            activeOpacity={0.85}
+          >
+            <MapIcon size={22} color={COLORS.textInverse} />
+            <Text style={styles.fullMapCTAText}>OPEN INTERACTIVE MAP</Text>
+          </TouchableOpacity>
+        </ResponsiveContainer>
       </ScrollView>
     </SafeAreaView>
   );

@@ -188,7 +188,19 @@ def calculate_lightning_risk(
             else:
                 return 0, "No elevated convective lightning risk detected."
 
-    # 2. Secondary check via Marine Weather weather codes if ocean analysis lightning unavailable
+    # 2. Check Ocean Analysis warnings for thunderstorm / lightning mentions
+    if isinstance(ocean_analysis, dict) and ocean_analysis.get("warnings"):
+        for w in ocean_analysis.get("warnings") or []:
+            w_type = str(w.get("type", "")).lower()
+            w_msg = str(w.get("message", "")).lower()
+            if any(term in w_type or term in w_msg for term in ["thunderstorm", "lightning", "squall", "convective"]):
+                sev = str(w.get("severity", "")).lower()
+                if sev in ["high", "critical", "severe", "alert", "danger"]:
+                    return 100, f"Active thunderstorm/lightning warning: {w.get('message', 'Dangerous squall activity.')}"
+                elif sev in ["medium", "moderate", "caution", "warning"]:
+                    return 50, f"Elevated convective storm advisory: {w.get('message', 'Convective instability.')}"
+
+    # 3. Secondary check via Marine Weather weather codes if ocean analysis lightning unavailable
     if isinstance(marine_weather, dict):
         weather_sec = marine_weather.get("weather") or {}
         code = weather_sec.get("weather_code")
@@ -236,9 +248,14 @@ def calculate_other_ocean_risk(
 # Step 1: Hard Safety Overrides Evaluator
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Step 1: Hard Safety Overrides Evaluator
+# ---------------------------------------------------------------------------
+
 def evaluate_hard_safety_overrides(
     svas_result: Optional[Dict[str, Any]],
     ocean_analysis_result: Optional[Dict[str, Any]],
+    boat_width_m: float = 5.0,
 ) -> Optional[Dict[str, Any]]:
     """
     Check authoritative hard safety stops first:
@@ -269,6 +286,38 @@ def evaluate_hard_safety_overrides(
         is_svas_stop = any(trigger in msg for trigger in should_not_sail_triggers) or (severity == "danger")
 
         if is_svas_stop:
+            factor_item = {
+                "id": "advisory",
+                "name": "Official INCOIS SVAS Advisory",
+                "value": "Sailing Restricted",
+                "unit": "advisory",
+                "value_formatted": "Restricted (Do Not Sail)",
+                "status": "danger",
+                "status_label": "Sailing Prohibited",
+                "impact": "critical",
+                "reason": f"INCOIS SVAS advisory states that vessels of {boat_width_m:.1f}m width should not sail: '{advisory.get('message', 'Unsafe conditions')}'.",
+                "interpretation": f"INCOIS SVAS advisory states that vessels of {boat_width_m:.1f}m width should not sail: '{advisory.get('message', 'Unsafe conditions')}'.",
+                "is_critical": True,
+            }
+            vessel_eval_str = f"{boat_width_m:.1f}m Vessel Evaluated" if (boat_width_m and boat_width_m > 0) else None
+            explanation_card = {
+                "decision": "DONT_GO",
+                "decision_label": "DON'T GO - Hazardous Marine Conditions",
+                "decision_subtitle": "Official INCOIS sailing restriction in effect",
+                "risk_score": 100,
+                "status": "NOT_RECOMMENDED",
+                "dominant_hazard": "INCOIS Vessel Sailing Restriction",
+                "factors": [factor_item],
+                "action_guidance": {
+                    "headline": "What Should You Do?",
+                    "action_text": "🚨 Official INCOIS SVAS advisory restricts sailing for this vessel size. Do not venture out; remain safely in harbor.",
+                    "urgency": "critical",
+                },
+                "vessel_evaluated": vessel_eval_str,
+                "boat_width_m": boat_width_m,
+                "data_quality": "good",
+                "missing_factors": [],
+            }
             return {
                 "agent": "risk",
                 "status": "NOT_RECOMMENDED",
@@ -276,99 +325,150 @@ def evaluate_hard_safety_overrides(
                 "reasons": [
                     f"INCOIS SVAS advisory states that boats in this size category should not sail: '{advisory.get('message')}'."
                 ],
-                "factors": [],
+                "factors": [factor_item],
+                "missing_factors": [],
                 "data_quality": "good",
                 "hard_override": True,
                 "override_reason": "SVAS_SHOULD_NOT_SAIL",
+                "explanation_card": explanation_card,
             }
 
     # -----------------------------------------------------------------------
     # B) Cyclone Hard Stop
     # -----------------------------------------------------------------------
     if isinstance(ocean_analysis_result, dict):
-        # 1. Direct cyclone section
         cyclone_sec = ocean_analysis_result.get("cyclone") or {}
-        if cyclone_sec.get("available") and cyclone_sec.get("data"):
-            c_data = cyclone_sec.get("data")
-            if isinstance(c_data, dict) and c_data.get("active_cyclones"):
-                return {
-                    "agent": "risk",
-                    "status": "NOT_RECOMMENDED",
-                    "risk_score": 100,
-                    "reasons": [
-                        "Active tropical cyclone warning affects the requested maritime region."
-                    ],
-                    "factors": [],
-                    "data_quality": "good",
-                    "hard_override": True,
-                    "override_reason": "ACTIVE_CYCLONE_WARNING",
-                }
+        has_cyclone = bool(cyclone_sec.get("available") and cyclone_sec.get("data") and cyclone_sec.get("data", {}).get("active_cyclones"))
+        cyclone_msg = "Active tropical cyclone warning affects the requested maritime region."
 
-        # 2. Ocean Analysis Warnings check
-        warnings = ocean_analysis_result.get("warnings") or []
-        for w in warnings:
-            w_type = str(w.get("type", "")).lower()
-            if "cyclone" in w_type:
-                return {
-                    "agent": "risk",
-                    "status": "NOT_RECOMMENDED",
-                    "risk_score": 100,
-                    "reasons": [
-                        f"Official tropical cyclone warning in effect: {w.get('message', 'Active system')}."
-                    ],
-                    "factors": [],
-                    "data_quality": "good",
-                    "hard_override": True,
-                    "override_reason": "ACTIVE_CYCLONE_WARNING",
-                }
+        if not has_cyclone:
+            warnings = ocean_analysis_result.get("warnings") or []
+            for w in warnings:
+                w_type = str(w.get("type", "")).lower()
+                if "cyclone" in w_type:
+                    has_cyclone = True
+                    cyclone_msg = f"Official tropical cyclone warning in effect: {w.get('message', 'Active system')}."
+                    break
+
+        if has_cyclone:
+            factor_item = {
+                "id": "hazards",
+                "name": "Tropical Cyclone Warning",
+                "value": "Active Cyclone",
+                "unit": "warning",
+                "value_formatted": "Active Cyclone Alert",
+                "status": "danger",
+                "status_label": "Extreme Hazard",
+                "impact": "critical",
+                "reason": cyclone_msg,
+                "interpretation": cyclone_msg,
+                "is_critical": True,
+            }
+            vessel_eval_str = f"{boat_width_m:.1f}m Vessel Evaluated" if (boat_width_m and boat_width_m > 0) else None
+            explanation_card = {
+                "decision": "DONT_GO",
+                "decision_label": "DON'T GO - Hazardous Marine Conditions",
+                "decision_subtitle": "Active tropical cyclone warning in effect",
+                "risk_score": 100,
+                "status": "NOT_RECOMMENDED",
+                "dominant_hazard": "Tropical Cyclone Warning",
+                "factors": [factor_item],
+                "action_guidance": {
+                    "headline": "What Should You Do?",
+                    "action_text": "🚨 Active tropical cyclone alert. All maritime operations must be suspended immediately. Secure vessels and heed Coast Guard directives.",
+                    "urgency": "critical",
+                },
+                "vessel_evaluated": vessel_eval_str,
+                "boat_width_m": boat_width_m,
+                "data_quality": "good",
+                "missing_factors": [],
+            }
+            return {
+                "agent": "risk",
+                "status": "NOT_RECOMMENDED",
+                "risk_score": 100,
+                "reasons": [cyclone_msg],
+                "factors": [factor_item],
+                "missing_factors": [],
+                "data_quality": "good",
+                "hard_override": True,
+                "override_reason": "ACTIVE_CYCLONE_WARNING",
+                "explanation_card": explanation_card,
+            }
 
     # -----------------------------------------------------------------------
     # C) Tsunami Hard Stop
     # -----------------------------------------------------------------------
     if isinstance(ocean_analysis_result, dict):
-        # 1. Direct tsunami section
         tsunami_sec = ocean_analysis_result.get("tsunami") or {}
+        has_tsunami = False
+        tsunami_msg = "Active seismic / tsunami hazard detected."
+
         if tsunami_sec.get("available"):
             events = tsunami_sec.get("events") or []
             for ev in events:
                 eval_str = str(ev.get("evaluation") or "").lower()
-                is_tsunami_threat = any(
-                    k in eval_str for k in ["warning", "alert", "threat", "watch", "evacuation"]
-                ) and ("no tsunami threat" not in eval_str)
+                is_threat = any(k in eval_str for k in ["warning", "alert", "threat", "watch", "evacuation"]) and ("no tsunami threat" not in eval_str)
+                if is_threat:
+                    has_tsunami = True
+                    tsunami_msg = f"INCOIS Tsunami Warning: Bulletin #{ev.get('bulletin_number')} for {ev.get('region', 'nearby region')} ({ev.get('evaluation')})."
+                    break
 
-                if is_tsunami_threat:
-                    return {
-                        "agent": "risk",
-                        "status": "NOT_RECOMMENDED",
-                        "risk_score": 100,
-                        "reasons": [
-                            f"INCOIS Tsunami Warning in effect: Bulletin #{ev.get('bulletin_number')} "
-                            f"for {ev.get('region', 'nearby region')} ({ev.get('evaluation')})."
-                        ],
-                        "factors": [],
-                        "data_quality": "good",
-                        "hard_override": True,
-                        "override_reason": "ACTIVE_TSUNAMI_WARNING",
-                    }
+        if not has_tsunami:
+            warnings = ocean_analysis_result.get("warnings") or []
+            for w in warnings:
+                w_type = str(w.get("type", "")).lower()
+                w_sev = str(w.get("severity", "")).lower()
+                if "tsunami" in w_type and w_sev in ["critical", "high"]:
+                    has_tsunami = True
+                    tsunami_msg = f"Active seismic / tsunami hazard: {w.get('message')}."
+                    break
 
-        # 2. Ocean Analysis Warnings check
-        warnings = ocean_analysis_result.get("warnings") or []
-        for w in warnings:
-            w_type = str(w.get("type", "")).lower()
-            w_sev = str(w.get("severity", "")).lower()
-            if "tsunami" in w_type and w_sev in ["critical", "high"]:
-                return {
-                    "agent": "risk",
-                    "status": "NOT_RECOMMENDED",
-                    "risk_score": 100,
-                    "reasons": [
-                        f"Active seismic / tsunami hazard detected: {w.get('message')}."
-                    ],
-                    "factors": [],
-                    "data_quality": "good",
-                    "hard_override": True,
-                    "override_reason": "ACTIVE_TSUNAMI_WARNING",
-                }
+        if has_tsunami:
+            factor_item = {
+                "id": "hazards",
+                "name": "Tsunami / Seismic Alert",
+                "value": "Active Tsunami Warning",
+                "unit": "warning",
+                "value_formatted": "Active Tsunami Warning",
+                "status": "danger",
+                "status_label": "Severe Hazard",
+                "impact": "critical",
+                "reason": tsunami_msg,
+                "interpretation": tsunami_msg,
+                "is_critical": True,
+            }
+            vessel_eval_str = f"{boat_width_m:.1f}m Vessel Evaluated" if (boat_width_m and boat_width_m > 0) else None
+            explanation_card = {
+                "decision": "DONT_GO",
+                "decision_label": "DON'T GO - Hazardous Marine Conditions",
+                "decision_subtitle": "Active tsunami warning in effect",
+                "risk_score": 100,
+                "status": "NOT_RECOMMENDED",
+                "dominant_hazard": "Tsunami / Seismic Alert",
+                "factors": [factor_item],
+                "action_guidance": {
+                    "headline": "What Should You Do?",
+                    "action_text": "🚨 Tsunami warning active. Evacuate coastal waters and move inland or to designated high ground immediately.",
+                    "urgency": "critical",
+                },
+                "vessel_evaluated": vessel_eval_str,
+                "boat_width_m": boat_width_m,
+                "data_quality": "good",
+                "missing_factors": [],
+            }
+            return {
+                "agent": "risk",
+                "status": "NOT_RECOMMENDED",
+                "risk_score": 100,
+                "reasons": [tsunami_msg],
+                "factors": [factor_item],
+                "missing_factors": [],
+                "data_quality": "good",
+                "hard_override": True,
+                "override_reason": "ACTIVE_TSUNAMI_WARNING",
+                "explanation_card": explanation_card,
+            }
 
     return None
 
@@ -444,7 +544,7 @@ def calculate_risk(
     # -----------------------------------------------------------------------
     # STEP 1: Hard Safety Overrides
     # -----------------------------------------------------------------------
-    hard_override_resp = evaluate_hard_safety_overrides(svas_result, ocean_analysis_result)
+    hard_override_resp = evaluate_hard_safety_overrides(svas_result, ocean_analysis_result, boat_width_m=boat_width_m)
     if hard_override_resp is not None:
         hard_override_resp["source_status"] = source_status
         return hard_override_resp
@@ -569,6 +669,38 @@ def calculate_risk(
 
     if not available_factors:
         # Edge case: No data available whatsoever
+        explanation_card = {
+            "decision": "DONT_GO",
+            "decision_label": "INSUFFICIENT DATA",
+            "decision_subtitle": "Critical marine data unavailable",
+            "risk_score": 100,
+            "status": "NOT_RECOMMENDED",
+            "dominant_hazard": "Missing Environmental Observations",
+            "factors": [
+                {
+                    "id": m,
+                    "name": m.replace("_", " ").title(),
+                    "value": None,
+                    "unit": "",
+                    "value_formatted": "N/A",
+                    "status": "unavailable",
+                    "status_label": "Data Unavailable",
+                    "impact": "unknown",
+                    "reason": "Missing data is not safe data. Live observations were not reported by data feeds.",
+                    "is_critical": False,
+                }
+                for m in missing_factors
+            ],
+            "action_guidance": {
+                "headline": "What Should You Do?",
+                "action_text": "Critical marine observations are missing. Do not venture into open sea without local visual confirmation and official port clearance.",
+                "urgency": "immediate",
+            },
+            "vessel_evaluated": bool(boat_width_m and boat_width_m > 0),
+            "boat_width_m": boat_width_m,
+            "data_quality": "insufficient",
+            "missing_factors": [m.replace("_", " ").title() for m in missing_factors],
+        }
         return {
             "agent": "risk",
             "status": "NOT_RECOMMENDED",
@@ -580,14 +712,13 @@ def calculate_risk(
             "hard_override": False,
             "override_reason": None,
             "source_status": source_status,
+            "explanation_card": explanation_card,
         }
 
     sum_available_base_weights = sum(item["base_weight"] for item in available_factors)
-
     total_weighted_risk = 0.0
 
     for item in available_factors:
-        # Proportional renormalization
         effective_weight = item["base_weight"] / sum_available_base_weights
         contribution = round(effective_weight * float(item["risk"]), 2)
         total_weighted_risk += effective_weight * float(item["risk"])
@@ -606,13 +737,294 @@ def calculate_risk(
         })
 
     final_risk_score = int(round(total_weighted_risk))
-    # Clamp to [0, 100]
     final_risk_score = max(0, min(100, final_risk_score))
     status = classify_status(final_risk_score)
 
-    # If data quality is insufficient, flag in reasons
     if data_quality == "insufficient":
         reasons.append("Caution: Critical marine weather factors were missing, increasing uncertainty.")
+
+    # -----------------------------------------------------------------------
+    # STEP 3: Construct Visual "WHY?" Risk Explanation Card
+    # -----------------------------------------------------------------------
+    explainable_factors: List[Dict[str, Any]] = []
+
+    # 1. Wave Factor
+    if wave_val is not None:
+        w_status = "safe" if wave_risk == 0 else ("caution" if wave_risk == 35 else "danger")
+        w_impact = "low" if wave_risk == 0 else ("moderate" if wave_risk == 35 else ("high" if wave_risk == 70 else "critical"))
+        w_label = "Low Impact (Calm Sea)" if wave_risk == 0 else ("Moderate Waves" if wave_risk == 35 else "Severe Wave Hazard")
+        w_boat_note = f" Within safe operating limits for your {boat_width_m:.1f}m vessel." if wave_risk == 0 else (f" Requires extra caution on a {boat_width_m:.1f}m boat." if wave_risk == 35 else f" High risk of swamping for a {boat_width_m:.1f}m boat.")
+        explainable_factors.append({
+            "id": "waves",
+            "name": "Wave Height",
+            "value": wave_val,
+            "unit": "m",
+            "value_formatted": f"{wave_val:.1f} m",
+            "status": w_status,
+            "status_label": w_label,
+            "impact": w_impact,
+            "reason": f"Wave height is {wave_val:.1f} m.{w_boat_note}",
+            "is_critical": bool(wave_risk is not None and wave_risk >= 70),
+        })
+    else:
+        explainable_factors.append({
+            "id": "waves",
+            "name": "Wave Height",
+            "value": None,
+            "unit": "m",
+            "value_formatted": "Data unavailable",
+            "status": "unavailable",
+            "status_label": "Data Unavailable",
+            "impact": "unknown",
+            "reason": "Wave height observations are currently unavailable from data feeds.",
+            "is_critical": False,
+        })
+
+    # 2. Wind Factor
+    if wind_val is not None:
+        wd_status = "safe" if wind_risk == 0 else ("caution" if wind_risk == 30 else "danger")
+        wd_impact = "low" if wind_risk == 0 else ("moderate" if wind_risk == 30 else ("high" if wind_risk == 70 else "critical"))
+        wd_label = "Light Breeze" if wind_risk == 0 else ("Moderate Wind" if wind_risk == 30 else ("Strong Wind" if wind_risk == 70 else "Gale Force Wind"))
+        explainable_factors.append({
+            "id": "wind",
+            "name": "Wind Speed",
+            "value": wind_val,
+            "unit": "kt",
+            "value_formatted": f"{wind_val:.1f} kt",
+            "status": wd_status,
+            "status_label": wd_label,
+            "impact": wd_impact,
+            "reason": f"Sustained wind speed is {wind_val:.1f} knots ({wd_label.lower()}).",
+            "is_critical": bool(wind_risk is not None and wind_risk >= 70),
+        })
+    else:
+        explainable_factors.append({
+            "id": "wind",
+            "name": "Wind Speed",
+            "value": None,
+            "unit": "kt",
+            "value_formatted": "Data unavailable",
+            "status": "unavailable",
+            "status_label": "Data Unavailable",
+            "impact": "unknown",
+            "reason": "Wind speed observations are currently unavailable.",
+            "is_critical": False,
+        })
+
+    # 3. Wind Gusts Factor
+    if gust_val is not None:
+        g_status = "safe" if gust_risk == 0 else ("caution" if gust_risk == 30 else "danger")
+        g_impact = "low" if gust_risk == 0 else ("moderate" if gust_risk == 30 else ("high" if gust_risk == 70 else "critical"))
+        g_label = "Low Gustiness" if gust_risk == 0 else ("Moderate Gusts" if gust_risk == 30 else "Dangerous Squalls")
+        explainable_factors.append({
+            "id": "gusts",
+            "name": "Wind Gusts",
+            "value": gust_val,
+            "unit": "kt",
+            "value_formatted": f"{gust_val:.1f} kt",
+            "status": g_status,
+            "status_label": g_label,
+            "impact": g_impact,
+            "reason": f"Peak gusts reaching {gust_val:.1f} knots ({g_label.lower()}).",
+            "is_critical": bool(gust_risk is not None and gust_risk >= 70),
+        })
+    else:
+        explainable_factors.append({
+            "id": "gusts",
+            "name": "Wind Gusts",
+            "value": None,
+            "unit": "kt",
+            "value_formatted": "Data unavailable",
+            "status": "unavailable",
+            "status_label": "Data Unavailable",
+            "impact": "unknown",
+            "reason": "Wind gust data is currently unavailable.",
+            "is_critical": False,
+        })
+
+    # 4. Ocean Current Factor
+    if curr_val is not None:
+        c_status = "safe" if current_risk == 0 else ("caution" if current_risk == 30 else "danger")
+        c_impact = "low" if current_risk == 0 else ("moderate" if current_risk == 30 else ("high" if current_risk == 70 else "critical"))
+        c_label = "Mild Current" if current_risk == 0 else ("Moderate Drift" if current_risk == 30 else "Strong Current")
+        explainable_factors.append({
+            "id": "current",
+            "name": "Ocean Current",
+            "value": curr_val,
+            "unit": "km/h",
+            "value_formatted": f"{curr_val:.1f} km/h",
+            "status": c_status,
+            "status_label": c_label,
+            "impact": c_impact,
+            "reason": f"Current velocity is {curr_val:.1f} km/h ({c_label.lower()}).",
+            "is_critical": bool(current_risk is not None and current_risk >= 70),
+        })
+    else:
+        explainable_factors.append({
+            "id": "current",
+            "name": "Ocean Current",
+            "value": None,
+            "unit": "km/h",
+            "value_formatted": "Data unavailable",
+            "status": "unavailable",
+            "status_label": "Data Unavailable",
+            "impact": "unknown",
+            "reason": "Ocean current data is currently unavailable.",
+            "is_critical": False,
+        })
+
+    # 5. Thunderstorm / Lightning Factor
+    if lightning_risk is not None:
+        l_status = "danger" if lightning_risk == 100 else ("caution" if lightning_risk == 50 else "safe")
+        l_impact = "critical" if lightning_risk == 100 else ("moderate" if lightning_risk == 50 else "low")
+        l_label = "Active Lightning Hazard" if lightning_risk == 100 else ("Elevated Storm Risk" if lightning_risk == 50 else "Clear (No Storms)")
+        explainable_factors.append({
+            "id": "lightning",
+            "name": "Thunderstorm & Lightning",
+            "value": "active" if lightning_risk == 100 else ("elevated" if lightning_risk == 50 else "clear"),
+            "unit": "status",
+            "value_formatted": l_label,
+            "status": l_status,
+            "status_label": l_label,
+            "impact": l_impact,
+            "reason": lightning_reason or ("No convective lightning activity detected." if lightning_risk == 0 else "Atmospheric instability detected."),
+            "is_critical": bool(lightning_risk == 100),
+        })
+    else:
+        explainable_factors.append({
+            "id": "lightning",
+            "name": "Thunderstorm & Lightning",
+            "value": None,
+            "unit": "status",
+            "value_formatted": "Data unavailable",
+            "status": "unavailable",
+            "status_label": "Data Unavailable",
+            "impact": "unknown",
+            "reason": "Convective storm radar data is currently unavailable.",
+            "is_critical": False,
+        })
+
+    # 6. Official SVAS Advisory Factor
+    if isinstance(svas_result, dict) and svas_result.get("status") == "success":
+        adv = svas_result.get("advisory", {})
+        adv_sev = str(adv.get("severity", "")).lower()
+        adv_msg = str(adv.get("message", "")).strip()
+        is_adv_caution = adv_sev in ["warning", "alert", "caution", "advisory"]
+        explainable_factors.append({
+            "id": "advisory",
+            "name": "Official INCOIS SVAS Advisory",
+            "value": adv_sev or "safe",
+            "unit": "advisory",
+            "value_formatted": f"Active ({adv_sev.upper()})" if is_adv_caution else "No Sailing Restrictions",
+            "status": "caution" if is_adv_caution else "safe",
+            "status_label": "Advisory in Effect" if is_adv_caution else "Clear",
+            "impact": "moderate" if is_adv_caution else "low",
+            "reason": adv_msg or "INCOIS SVAS service permits sailing for this vessel category.",
+            "is_critical": False,
+        })
+    elif isinstance(svas_result, dict) and svas_result.get("reason"):
+        explainable_factors.append({
+            "id": "advisory",
+            "name": "Official INCOIS SVAS Advisory",
+            "value": "Info",
+            "unit": "advisory",
+            "value_formatted": "Vessel Category Notice",
+            "status": "safe",
+            "status_label": "Standard Rules",
+            "impact": "low",
+            "reason": str(svas_result.get("reason")),
+            "is_critical": False,
+        })
+    else:
+        explainable_factors.append({
+            "id": "advisory",
+            "name": "Official INCOIS SVAS Advisory",
+            "value": None,
+            "unit": "advisory",
+            "value_formatted": "Data unavailable",
+            "status": "unavailable",
+            "status_label": "Data Unavailable",
+            "impact": "unknown",
+            "reason": "Official INCOIS SVAS bulletin is currently unavailable.",
+            "is_critical": False,
+        })
+
+    for f in explainable_factors:
+        if "interpretation" not in f:
+            f["interpretation"] = f.get("reason", "")
+
+    # Sort factors by severity: Danger/Critical first, Caution second, Safe third, Unavailable last
+    def factor_sort_key(f: Dict[str, Any]) -> int:
+        st = f.get("status")
+        if st == "danger" or f.get("is_critical"):
+            return 0
+        if st == "caution":
+            return 1
+        if st == "safe":
+            return 2
+        return 3
+
+    sorted_factors = sorted(explainable_factors, key=factor_sort_key)
+
+    danger_factors = [f for f in sorted_factors if f.get("status") == "danger"]
+    caution_factors = [f for f in sorted_factors if f.get("status") == "caution"]
+
+    # Determine Big Decision, Dominant Hazard, Primary Watch Item, and Action Guidance
+    primary_thing_to_watch = None
+    primary_thing_to_watch_reason = None
+
+    if status in ["NOT_RECOMMENDED", "HIGH_RISK"] or final_risk_score >= 60 or (danger_factors and any(f.get("is_critical") for f in danger_factors)):
+        decision = "DONT_GO"
+        decision_label = "DON'T GO - Hazardous Marine Conditions"
+        decision_subtitle = f"Unsafe {danger_factors[0]['name'].lower()} detected" if danger_factors else "Unsafe or high-risk conditions detected"
+        urgency = "critical"
+        dominant_hazard = danger_factors[0].get("name") if danger_factors else "Cumulative Elevated Marine Risk"
+        action_text = f"🚨 {dominant_hazard} poses an immediate safety hazard. Delay departure and remain ashore or in sheltered harbor until conditions clear."
+    elif status == "CAUTION" or (30 <= final_risk_score < 60) or (len(caution_factors) >= 2 and final_risk_score >= 25):
+        decision = "CAUTION"
+        decision_label = "CAUTION - Marginal Marine Conditions"
+        dominant_hazard = (danger_factors[0] if danger_factors else caution_factors[0]).get("name") if (danger_factors or caution_factors) else None
+        decision_subtitle = f"Caution required due to {dominant_hazard.lower()}" if dominant_hazard else "Conditions require extra care"
+        urgency = "moderate"
+        action_text = f"Proceed with caution. Monitor changing {dominant_hazard.lower() if dominant_hazard else 'marine'} conditions and avoid offshore exposure."
+    else:
+        decision = "GO"
+        decision_label = "GO - Safe Marine Conditions"
+        decision_subtitle = "Conditions generally favourable for sailing"
+        urgency = "routine"
+        dominant_hazard = None
+        if caution_factors:
+            primary_thing_to_watch = caution_factors[0].get("name")
+            primary_thing_to_watch_reason = caution_factors[0].get("reason") or caution_factors[0].get("interpretation")
+        action_text = "Conditions are generally favourable for departure. Maintain standard navigation safety watch and continue monitoring routine weather updates."
+
+    missing_names = [
+        {"wave_height": "Wave Height", "wind_speed": "Wind Speed", "wind_gusts": "Wind Gusts", "ocean_current": "Ocean Current", "lightning_convective": "Thunderstorm & Lightning", "other_ocean_hazard": "Marine Hazards"}.get(m, m.replace("_", " ").title())
+        for m in missing_factors
+    ]
+
+    vessel_eval_str = f"{boat_width_m:.1f}m Vessel Evaluated" if (boat_width_m and boat_width_m > 0) else None
+
+    explanation_card = {
+        "decision": decision,
+        "decision_label": decision_label,
+        "decision_subtitle": decision_subtitle,
+        "risk_score": final_risk_score,
+        "status": status,
+        "dominant_hazard": dominant_hazard,
+        "primary_thing_to_watch": primary_thing_to_watch,
+        "primary_thing_to_watch_reason": primary_thing_to_watch_reason,
+        "factors": sorted_factors,
+        "action_guidance": {
+            "headline": "What Should You Do?",
+            "action_text": action_text,
+            "urgency": urgency,
+        },
+        "vessel_evaluated": vessel_eval_str,
+        "boat_width_m": boat_width_m,
+        "data_quality": data_quality,
+        "missing_factors": missing_names,
+    }
 
     return {
         "agent": "risk",
@@ -625,6 +1037,7 @@ def calculate_risk(
         "hard_override": False,
         "override_reason": None,
         "source_status": source_status,
+        "explanation_card": explanation_card,
     }
 
 

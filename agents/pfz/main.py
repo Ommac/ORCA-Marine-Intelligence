@@ -33,7 +33,6 @@ import copy
 import json
 import math
 import requests
-from datetime import datetime
 
 # ---------------------------------------------------------------------------
 # Config
@@ -292,15 +291,13 @@ def bearing_to_compass_direction(bearing: float) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Step 6: Find nearest point
+# Step 6: Find nearest point & rank distinct candidate features
 # ---------------------------------------------------------------------------
 
 def find_nearest_point(points: list, latitude: float, longitude: float) -> dict:
     """
     Brute-force scan of all candidate points, returning the nearest one
-    plus distance/bearing/direction. Simple by design - fine for this
-    stage's data volumes; can be swapped for a spatial index later if
-    needed without changing the public interface.
+    plus distance/bearing/direction.
     """
     if not points:
         raise RuntimeError("No PFZ coordinates available to search.")
@@ -325,14 +322,149 @@ def find_nearest_point(points: list, latitude: float, longitude: float) -> dict:
     }
 
 
+def rank_pfz_candidates(points: list, geojson_data: dict, latitude: float, longitude: float) -> list:
+    """
+    Group candidate vertices by distinct GeoJSON feature (individual PFZ lines/zones),
+    compute the closest distance and bearing for each feature, and sort by distance.
+    Returns a list of candidate dictionaries ordered from nearest (rank 1) upwards.
+    """
+    if not points:
+        return []
+
+    # Group points by feature_index
+    features_map: dict = {}
+    for p in points:
+        f_idx = p.get("feature_index", 0)
+        if f_idx not in features_map:
+            features_map[f_idx] = []
+        features_map[f_idx].append(p)
+
+    candidates = []
+    features_list = geojson_data.get("features", [])
+
+    for f_idx, feat_points in features_map.items():
+        if not feat_points:
+            continue
+        # Find closest vertex in this feature
+        res = find_nearest_point(feat_points, latitude, longitude)
+        closest_vertex = res["point"]
+        props = closest_vertex.get("properties", {})
+
+        matched_geometry = None
+        if 0 <= f_idx < len(features_list):
+            matched_geometry = copy.deepcopy(features_list[f_idx].get("geometry"))
+
+        candidate = {
+            "feature_index": f_idx,
+            "nearest_point": {
+                "latitude": round(closest_vertex["lat"], 5),
+                "longitude": round(closest_vertex["lon"], 5),
+                "distance_km": res["distance_km"],
+                "bearing_degrees": res["bearing_degrees"],
+                "direction": res["direction"],
+            },
+            "distance_km": res["distance_km"],
+            "bearing_degrees": res["bearing_degrees"],
+            "direction": res["direction"],
+            "geometry": matched_geometry,
+            "category": _get_property(props, PROP_CATEGORY),
+            "uid": _get_property(props, PROP_UID),
+            "sno": _get_property(props, PROP_SNO),
+            "data_year": _get_property(props, PROP_YEAR),
+            "julian_day": _get_property(props, PROP_JULIAN_DAY),
+            "valid_until": None,
+        }
+        candidates.append(candidate)
+
+    # Sort candidates by distance ascending
+    candidates.sort(key=lambda c: c["distance_km"])
+
+    # Assign 1-indexed rank
+    for rank_idx, c in enumerate(candidates, 1):
+        c["rank"] = rank_idx
+
+    return candidates
+
+
+def evaluate_pfz_recommendations(ranked_candidates: list, latitude: float, longitude: float, max_candidates: int = 3) -> list:
+    """
+    Format and annotate top N distinct PFZ candidate zones.
+    - Rank 1 is marked recommended=True with transparent distance & fuel rationale.
+    - Subsequent ranks (2, 3) are marked recommended=False with alternative zone descriptions.
+    """
+    top_candidates = []
+    for c in ranked_candidates[:max_candidates]:
+        rank_num = c.get("rank", 1)
+        np = c.get("nearest_point", {})
+        lat_val = np.get("latitude")
+        lon_val = np.get("longitude")
+        dist_km = c.get("distance_km", 0.0)
+        direction = c.get("direction", "")
+        bearing = c.get("bearing_degrees", 0.0)
+        cat = c.get("category") or "Potential Fishing Zone"
+        uid = c.get("uid")
+        sno = c.get("sno")
+        f_idx = c.get("feature_index", rank_num)
+
+        is_recommended = (rank_num == 1)
+        if is_recommended:
+            rec_reason = (
+                f"Recommended based on shortest travel distance (~{dist_km:.1f} km {direction}), "
+                "minimizing transit time and fuel consumption."
+            )
+        else:
+            rec_reason = (
+                f"Alternative fishing zone (~{dist_km:.1f} km {direction}). "
+                f"Requires ~{dist_km - ranked_candidates[0]['distance_km']:.1f} km additional transit."
+            )
+
+        candidate_obj = {
+            "id": f"pfz-cand-{rank_num}-{uid or f_idx}",
+            "rank": rank_num,
+            "label": f"PFZ {rank_num}",
+            "name": f"{cat} #{rank_num}",
+            "distance_km": dist_km,
+            "bearing_degrees": bearing,
+            "direction": direction,
+            "coordinates": {
+                "latitude": lat_val,
+                "longitude": lon_val,
+            },
+            "nearest_point": {
+                "latitude": lat_val,
+                "longitude": lon_val,
+                "distance_km": dist_km,
+                "bearing_degrees": bearing,
+                "direction": direction,
+            },
+            "geometry": copy.deepcopy(c.get("geometry")),
+            "category": cat,
+            "uid": uid,
+            "sno": sno,
+            "data_year": c.get("data_year"),
+            "julian_day": c.get("julian_day"),
+            "valid_until": c.get("valid_until"),
+            "recommended": is_recommended,
+            "recommendation_reason": rec_reason,
+        }
+        top_candidates.append(candidate_obj)
+
+    return top_candidates
+
+
 # ---------------------------------------------------------------------------
 # Step 7: Core public function
 # ---------------------------------------------------------------------------
 
-def find_nearest_pfz(latitude: float, longitude: float) -> dict:
+def find_nearest_pfz(latitude: float, longitude: float, rank: int = 1) -> dict:
     """
     Core specialist-agent function. Frontend/Orchestrator calls this
     directly with numeric latitude/longitude.
+
+    Parameters:
+      latitude (float): Fisherman latitude.
+      longitude (float): Fisherman longitude.
+      rank (int): 1-indexed ordinal PFZ rank (1 for nearest, 2 for 2nd nearest, etc.). Default 1.
 
     Always returns a JSON-serializable dict with a stable schema:
       - on success: {"agent": "pfz", "status": "success", ...}
@@ -356,54 +488,101 @@ def find_nearest_pfz(latitude: float, longitude: float) -> dict:
 
         latest_points, latest_year, latest_jday = select_latest_points(all_points)
 
-        result = find_nearest_point(latest_points, latitude, longitude)
-        nearest_point = result["point"]
-        props = nearest_point["properties"]
+        ranked_candidates = rank_pfz_candidates(latest_points, geojson_data, latitude, longitude)
 
-        # The matched vertex remembers which source feature it came from
-        # (see extract_pfz_points). Look that feature back up in the raw
-        # GeoJSON so we can hand back its *complete* original geometry -
-        # not just the single nearest coordinate - for the frontend map.
-        # deepcopy so nothing downstream can mutate the raw geojson_data.
-        feature_index = nearest_point["feature_index"]
-        matched_feature = geojson_data["features"][feature_index]
-        matched_geometry = copy.deepcopy(matched_feature.get("geometry"))
-
-        data_year = _get_property(props, PROP_YEAR)
-        julian_day = _get_property(props, PROP_JULIAN_DAY)
-        obs_date_str = None
-        if data_year and julian_day:
-            try:
-                obs_date_str = datetime.strptime(f"{data_year} {julian_day}", "%Y %j").strftime("%Y-%m-%d")
-            except (ValueError, TypeError):
-                obs_date_str = None
-
-        pfz_block = {
-            "nearest_point": {
-                "latitude": round(nearest_point["lat"], 5),
-                "longitude": round(nearest_point["lon"], 5),
+        if not ranked_candidates:
+            # Fallback to single nearest point scan if grouping fails
+            result = find_nearest_point(latest_points, latitude, longitude)
+            nearest_point = result["point"]
+            props = nearest_point["properties"]
+            feature_index = nearest_point["feature_index"]
+            matched_feature = geojson_data["features"][feature_index]
+            matched_geometry = copy.deepcopy(matched_feature.get("geometry"))
+            pfz_block = {
+                "id": "pfz-cand-1",
+                "rank": 1,
+                "label": "PFZ 1",
+                "name": "Potential Fishing Zone #1",
                 "distance_km": result["distance_km"],
                 "bearing_degrees": result["bearing_degrees"],
                 "direction": result["direction"],
-            },
-            # Full original PFZ geometry as returned by INCOIS (e.g.
-            # MultiLineString), coordinates untouched and in their
-            # original [longitude, latitude] order. Used by the
-            # frontend Map to draw the actual PFZ feature.
-            "geometry": matched_geometry,
-            "category": _get_property(props, PROP_CATEGORY),
-            "uid": _get_property(props, PROP_UID),
-            "sno": _get_property(props, PROP_SNO),
-            "data_year": data_year,
-            "julian_day": julian_day,
-            "observation_date": obs_date_str,
-            "data_type": "latest_observation",
-            "is_forecast": False,
-            "note": "PFZ is satellite observation data, not a future forecast.",
-            # INCOIS's WFS response does not include an explicit validity
-            # window for the PFZ advisory - we do not fabricate one.
-            "valid_until": None,
-        }
+                "coordinates": {
+                    "latitude": round(nearest_point["lat"], 5),
+                    "longitude": round(nearest_point["lon"], 5),
+                },
+                "nearest_point": {
+                    "latitude": round(nearest_point["lat"], 5),
+                    "longitude": round(nearest_point["lon"], 5),
+                    "distance_km": result["distance_km"],
+                    "bearing_degrees": result["bearing_degrees"],
+                    "direction": result["direction"],
+                },
+                "geometry": matched_geometry,
+                "category": _get_property(props, PROP_CATEGORY),
+                "uid": _get_property(props, PROP_UID),
+                "sno": _get_property(props, PROP_SNO),
+                "data_year": _get_property(props, PROP_YEAR),
+                "julian_day": _get_property(props, PROP_JULIAN_DAY),
+                "valid_until": None,
+                "recommended": True,
+                "recommendation_reason": (
+                    f"Nearest active fishing zone (~{result['distance_km']:.1f} km {result['direction']}), "
+                    "minimizing transit time and fuel consumption."
+                ),
+            }
+            target_rank = 1
+            top_candidates = [pfz_block]
+            all_candidates_summary = []
+        else:
+            top_candidates = evaluate_pfz_recommendations(ranked_candidates, latitude, longitude, max_candidates=3)
+            req_rank = int(rank) if rank is not None and int(rank) >= 1 else 1
+            target_rank = min(req_rank, len(ranked_candidates))
+            
+            # Find candidate matching target_rank from top_candidates or format it
+            if target_rank <= len(top_candidates):
+                pfz_block = copy.deepcopy(top_candidates[target_rank - 1])
+            else:
+                raw_c = ranked_candidates[target_rank - 1]
+                pfz_block = {
+                    "id": f"pfz-cand-{raw_c['rank']}-{raw_c.get('uid') or raw_c.get('feature_index')}",
+                    "rank": raw_c["rank"],
+                    "label": f"PFZ {raw_c['rank']}",
+                    "name": f"{raw_c.get('category') or 'Potential Fishing Zone'} #{raw_c['rank']}",
+                    "distance_km": raw_c["distance_km"],
+                    "bearing_degrees": raw_c["bearing_degrees"],
+                    "direction": raw_c["direction"],
+                    "coordinates": {
+                        "latitude": raw_c["nearest_point"]["latitude"],
+                        "longitude": raw_c["nearest_point"]["longitude"],
+                    },
+                    "nearest_point": raw_c["nearest_point"],
+                    "geometry": raw_c["geometry"],
+                    "category": raw_c.get("category"),
+                    "uid": raw_c.get("uid"),
+                    "sno": raw_c.get("sno"),
+                    "data_year": raw_c.get("data_year"),
+                    "julian_day": raw_c.get("julian_day"),
+                    "valid_until": raw_c.get("valid_until"),
+                    "recommended": False,
+                    "recommendation_reason": f"Alternative fishing zone (~{raw_c['distance_km']:.1f} km {raw_c['direction']}).",
+                }
+
+            all_candidates_summary = [
+                {
+                    "rank": c["rank"],
+                    "distance_km": c["distance_km"],
+                    "bearing_degrees": c["bearing_degrees"],
+                    "direction": c["direction"],
+                    "latitude": c["nearest_point"]["latitude"],
+                    "longitude": c["nearest_point"]["longitude"],
+                    "uid": c.get("uid"),
+                    "category": c.get("category"),
+                }
+                for c in ranked_candidates[:10]
+            ]
+
+        # Attach top_candidates directly into the pfz_block as well for consumer convenience
+        pfz_block["top_candidates"] = top_candidates
 
         return {
             "agent": "pfz",
@@ -413,6 +592,10 @@ def find_nearest_pfz(latitude: float, longitude: float) -> dict:
                 "longitude": longitude,
             },
             "pfz": pfz_block,
+            "top_candidates": top_candidates,
+            "selected_rank": target_rank,
+            "total_candidates": len(ranked_candidates),
+            "all_candidates": all_candidates_summary,
             "data_freshness": {
                 "latest_year_in_response": latest_year,
                 "latest_julian_day_in_response": latest_jday,
