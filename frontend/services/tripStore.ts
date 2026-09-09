@@ -14,7 +14,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PRESET_LOCATIONS } from '../constants/locations';
 import { PresetLocation } from '../types/orca';
-import { clearCurrentAssessment } from './api';
+import { clearCurrentAssessment } from './assessmentStore';
+import { getTodayDateISO } from '../utils/formatting';
+
+export { getTodayDateISO };
 
 export interface TripLocation {
   id?: string;
@@ -34,17 +37,6 @@ export interface ActiveTripState {
 }
 
 const STORAGE_KEY = '@orca_active_trip_v2';
-
-/**
- * Calculates today's local date in YYYY-MM-DD format using the device's local timezone.
- */
-export function getTodayDateISO(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
 
 /**
  * Creates the default initial trip state with today's local date and Palghar preset.

@@ -68,7 +68,7 @@ app.add_middleware(
 
 class OrcaAssessRequest(BaseModel):
     """Pydantic validation schema for ORCA assessment requests."""
-    query: str = Field(..., description="Natural-language question from the fisherman.")
+    query: Optional[str] = Field(None, description="Natural-language question from the fisherman.")
     latitude: float = Field(..., ge=-90.0, le=90.0, description="Vessel latitude (-90 to 90).")
     longitude: float = Field(..., ge=-180.0, le=180.0, description="Vessel longitude (-180 to 180).")
     date: str = Field(..., description="Requested target date in YYYY-MM-DD format.")

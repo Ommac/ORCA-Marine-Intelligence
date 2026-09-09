@@ -124,12 +124,39 @@ export interface Hazard {
 
 export type AlertType = "weather" | "ocean" | "vessel" | "geofence" | "risk";
 export type AlertSeverity = "critical" | "high" | "moderate" | "low" | "info";
+export type AlertSeverityLevel = "CRITICAL" | "HIGH" | "CAUTION" | "INFORMATION" | "SAFE" | "MODERATE" | "MEDIUM" | "LOW" | "INFO" | "NONE";
+export type AlertStatus = "active" | "forecast" | "informational" | "safe" | "unavailable" | "ACTIVE" | "RESOLVED" | "DISMISSED";
+export type AlertCategory = "boat_safety" | "ocean_hazard" | "weather" | "forecast" | "pfz_safety" | "svas" | "general" | "WEATHER" | "VESSEL" | "OCEAN" | "GEOFENCE" | "RISK" | string;
+
+export interface AlertEvidence {
+  label: string;
+  value: string | number;
+  unit?: string;
+}
+
+export interface OrcaAlert {
+  id: string;
+  type: string;
+  severity: AlertSeverityLevel;
+  priority: number;
+  title: string;
+  subtitle?: string;
+  evidence?: AlertEvidence[];
+  advice: string;
+  source?: string;
+  status: AlertStatus | string;
+  category: AlertCategory | string;
+  icon?: string;
+  distance?: string;
+  direction?: string;
+  updatedAt?: string;
+}
 
 export interface Alert {
   id: string;
   request_id?: string;
-  type: AlertType;
-  severity: AlertSeverity;
+  type: AlertType | string;
+  severity: AlertSeverity | SeverityLevel;
   title: string;
   message: string;
   source: string;
@@ -211,6 +238,7 @@ export interface OrcaResponse {
   display?: DisplayFlags;
   risk_explanation?: RiskExplanation;
   top_pfz?: PFZCandidate[];
+  lightning?: any;
 }
 
 export interface PresetLocation {

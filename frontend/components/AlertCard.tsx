@@ -11,20 +11,31 @@ import {
   AlertTriangle,
   CheckCircle2,
 } from 'lucide-react-native';
-import { Hazard } from '../types/orca';
+import { Hazard, Alert, SeverityLevel } from '../types/orca';
 import { getSeverityTheme } from '../utils/formatting';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../constants/theme';
 
-interface AlertCardProps {
-  hazard: Hazard;
+export interface AlertCardProps {
+  hazard?: Hazard;
+  alert?: Alert;
 }
 
-export const AlertCard: React.FC<AlertCardProps> = ({ hazard }) => {
-  const theme = getSeverityTheme(hazard.severity);
-  const isNone = hazard.severity === 'NONE';
+export const AlertCard: React.FC<AlertCardProps> = ({ hazard, alert }) => {
+  const itemTitle = alert?.title || hazard?.title || '';
+  const itemDesc = alert?.message || hazard?.description || '';
+  const itemType = alert?.type || hazard?.type || 'Hazard';
+  const rawSeverity = (alert?.severity || hazard?.severity || 'NONE').toUpperCase();
+  const severity = (['CRITICAL', 'HIGH', 'MODERATE', 'MEDIUM', 'LOW', 'INFO', 'NONE'].includes(rawSeverity)
+    ? rawSeverity
+    : 'NONE') as SeverityLevel;
+  const itemSource = alert?.source || hazard?.source;
+  const itemUpdated = alert?.timestamp || hazard?.updated_at;
+
+  const theme = getSeverityTheme(severity);
+  const isNone = severity === 'NONE';
 
   const getHazardIcon = () => {
-    const typeLower = hazard.type.toLowerCase();
+    const typeLower = itemType.toLowerCase();
     if (typeLower.includes('cyclone')) {
       return <Flame size={24} color={theme.accentColor} strokeWidth={2.4} />;
     }
@@ -73,26 +84,26 @@ export const AlertCard: React.FC<AlertCardProps> = ({ hazard }) => {
       </View>
 
       <Text style={[styles.title, { color: COLORS.textPrimary }]}>
-        {hazard.title}
+        {itemTitle}
       </Text>
 
       <Text style={styles.description}>
-        {hazard.description}
+        {itemDesc}
       </Text>
 
-      {(hazard.updated_at || hazard.source) && (
+      {(itemUpdated || itemSource) && (
         <View style={styles.footerRow}>
-          {hazard.updated_at && (
+          {itemUpdated && (
             <View style={styles.footerItem}>
               <Clock size={13} color={COLORS.textTertiary} />
-              <Text style={styles.footerText}>Updated: {hazard.updated_at}</Text>
+              <Text style={styles.footerText}>Updated: {itemUpdated}</Text>
             </View>
           )}
 
-          {hazard.source && (
+          {itemSource && (
             <View style={styles.footerItem}>
               <Building2 size={13} color={COLORS.textTertiary} />
-              <Text style={styles.footerText}>Source: {hazard.source}</Text>
+              <Text style={styles.footerText}>Source: {itemSource}</Text>
             </View>
           )}
         </View>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ship, ShieldAlert, ShieldCheck } from 'lucide-react-native';
-import { OrcaAlert } from '../../types/orca';
+import { OrcaAlert, AlertEvidence } from '../../types/orca';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
 import { formatBoatCategory } from '../../utils/formatting';
 
@@ -58,7 +58,7 @@ export const PersonalizedBoatAlert: React.FC<PersonalizedBoatAlertProps> = ({
             {boatCategoryText} ({boatWidthM}m)
           </Text>
         </View>
-        {alert.evidence && alert.evidence.map((ev, idx) => (
+        {alert.evidence && alert.evidence.map((ev: AlertEvidence, idx: number) => (
           <View key={idx} style={styles.evidenceRow}>
             <View style={[styles.bullet, { backgroundColor: textColor }]} />
             <Text style={[styles.evidenceText, { color: textColor }]}>

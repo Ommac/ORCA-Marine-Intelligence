@@ -32,9 +32,14 @@ import { formatDistance, formatKnots, formatMeters, formatKmh, formatDegreesToCo
 const PRIORITY: Record<AlertSeverityLevel, number> = {
   CRITICAL: 100,
   HIGH: 80,
+  MODERATE: 70,
   CAUTION: 60,
+  MEDIUM: 50,
+  LOW: 40,
   INFORMATION: 20,
+  INFO: 20,
   SAFE: 0,
+  NONE: 0,
 };
 
 // ===========================================================================
@@ -606,8 +611,13 @@ export function countAlertsBySeverity(alerts: OrcaAlert[]): Record<AlertSeverity
   return {
     CRITICAL: alerts.filter(a => a.severity === 'CRITICAL').length,
     HIGH: alerts.filter(a => a.severity === 'HIGH').length,
+    MODERATE: alerts.filter(a => a.severity === 'MODERATE').length,
     CAUTION: alerts.filter(a => a.severity === 'CAUTION').length,
+    MEDIUM: alerts.filter(a => a.severity === 'MEDIUM').length,
+    LOW: alerts.filter(a => a.severity === 'LOW').length,
     INFORMATION: alerts.filter(a => a.severity === 'INFORMATION').length,
+    INFO: alerts.filter(a => a.severity === 'INFO').length,
     SAFE: alerts.filter(a => a.severity === 'SAFE').length,
+    NONE: alerts.filter(a => a.severity === 'NONE').length,
   };
 }

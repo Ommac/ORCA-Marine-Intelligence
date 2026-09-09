@@ -6,6 +6,17 @@
 import { AssessmentStatus, SeverityLevel } from '../types/orca';
 import { COLORS } from '../constants/theme';
 
+/**
+ * Calculates today's local date in YYYY-MM-DD format using the device's local timezone.
+ */
+export function getTodayDateISO(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function formatDistance(km?: number): string {
   if (km === undefined || km === null || isNaN(km)) return 'Not available';
   return `${km.toFixed(1)} km`;

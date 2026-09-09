@@ -263,7 +263,7 @@ def classify_query(query: str) -> Tuple[str, List[str], bool]:
     q = (query or "").strip().lower()
 
     if not q:
-        return "general", [], False
+        return "safety_assessment", ALL_SPECIALISTS.copy(), True
 
     emergency_keywords = [
         "boat is in danger", "stranded at sea", "emergency", "mayday", "sos",
@@ -304,6 +304,9 @@ def classify_query(query: str) -> Tuple[str, List[str], bool]:
         "hazard zones", "hazardous marine", "marine hazards", "ocean hazards",
         "restricted zone", "restricted zones", "geofence", "geofencing",
         "no-go zone", "no go zone", "no-fishing zone",
+        "check condition", "check conditions", "marine condition", "marine conditions",
+        "fishing condition", "fishing conditions", "trip condition", "trip conditions",
+        "conditions for", "conditions near",
     ]
     if contains_any(q, safety_and_hazard_keywords):
         return "safety_assessment", ALL_SPECIALISTS.copy(), True
@@ -447,16 +450,15 @@ def resolve_context_and_intent(
     has_anaphora = any(bool(re.search(pat, q_lower)) for pat in anaphora_patterns)
     has_cached_pfz = bool(conv_ctx.get("last_pfz_candidates") or conv_ctx.get("last_pfz_data"))
     last_entity = conv_ctx.get("last_entity")
+    has_last_pfz_context = (last_entity == "pfz") or has_cached_pfz
 
     # Is this a valid contextual reference to previous PFZ?
     # ONLY True if:
-    # 1. We have cached PFZ from a previous turn
-    # 2. Previous turn entity was PFZ
-    # 3. Current query has anaphora or map action or ordinal referencing the previous PFZ
-    # AND 4. Current query is NOT an emergency or standalone general query without reference
+    # 1. We have previous PFZ context (last_entity == "pfz" or cached PFZ)
+    # 2. Current query has anaphora or map action or ordinal referencing the previous PFZ
+    # AND 3. Current query is NOT an emergency or standalone general query without reference
     is_pfz_context_followup = (
-        has_cached_pfz
-        and last_entity == "pfz"
+        has_last_pfz_context
         and (has_anaphora or is_map_action or (extracted_rank is not None and not has_direct_pfz_keyword))
         and raw_intent not in ["emergency"]
         and not (raw_intent == "general" and not has_anaphora and not is_map_action)

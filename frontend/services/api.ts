@@ -7,65 +7,23 @@
 
 import { OrcaRequest, OrcaResponse, AssessmentStatus, SeverityLevel, Hazard, Alert } from '../types/orca';
 import { getMockResponseForRequest, MOCK_PALGHAR_RESPONSE } from '../mocks/orcaResponse';
-import { getActiveTrip, getTodayDateISO, setActiveLocation, setActiveDate, setActiveBoatWidth } from './tripStore';
+import { getActiveTrip, getTodayDateISO } from './tripStore';
+import {
+  getCurrentAssessment,
+  subscribeToAssessment,
+  clearCurrentAssessment,
+  setAssessmentState,
+  setLatestRequestId,
+  getLatestRequestId,
+} from './assessmentStore';
+
+export { getCurrentAssessment, subscribeToAssessment, clearCurrentAssessment };
 
 // Configuration Flag: Set to false for live backend API calls (POST /api/orca/assess)
 export const USE_MOCK_API = false;
 
 // Backend Base URL configured via environment variable
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
-
-// Empty initial assessment — no mock/hardcoded data before first real assessment
-const EMPTY_INITIAL_ASSESSMENT: OrcaResponse = {
-  assessment: {
-    status: 'SAFE' as AssessmentStatus,
-    risk_score: 0,
-    summary: '',
-  },
-  pfz: { available: false },
-  marine: { available: false },
-  svas: { available: false },
-  hazards: [],
-  alerts: [],
-  meta: {},
-};
-
-// In-memory active session cache so tabs share the same trip state seamlessly
-let currentAssessmentState: OrcaResponse = EMPTY_INITIAL_ASSESSMENT;
-
-type AssessmentListener = (response: OrcaResponse) => void;
-const listeners: Set<AssessmentListener> = new Set();
-
-// Race condition guard: tracks the most recent request to prevent stale responses
-let latestRequestId: string | null = null;
-
-export function getCurrentAssessment(): OrcaResponse {
-  return currentAssessmentState;
-}
-
-export function subscribeToAssessment(listener: AssessmentListener): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-function notifyAssessmentListeners(response: OrcaResponse) {
-  // Race condition guard: only update if this is the latest request
-  const incomingRequestId = response.request_id || response.meta?.request_id;
-  if (latestRequestId && incomingRequestId && incomingRequestId !== latestRequestId) {
-    console.warn(`[ORCA ALERTS] Ignoring stale response: ${incomingRequestId} (latest: ${latestRequestId})`);
-    return;
-  }
-  currentAssessmentState = response;
-  listeners.forEach((listener) => {
-    try {
-      listener(response);
-    } catch (err) {
-      console.error('Error notifying assessment listener:', err);
-    }
-  });
-}
 
 /**
  * Normalizes raw structured response from POST /api/orca/assess into OrcaResponse
@@ -248,12 +206,12 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
   if (USE_MOCK_API) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     const mockData = getMockResponseForRequest(effectiveRequest);
-    notifyAssessmentListeners(mockData);
+    setAssessmentState(mockData);
     return mockData;
   }
 
   // Track this as the latest request for race condition prevention
-  latestRequestId = effectiveRequest.request_id || null;
+  setLatestRequestId(effectiveRequest.request_id || null);
 
   try {
     const endpoint = `${BASE_URL.replace(/\/+$/, '')}/api/orca/assess`;
@@ -286,7 +244,7 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
     console.log(`[ORCA ALERTS DEBUG] Alerts received: ${normalized.alerts?.length ?? 0}`);
     console.log(`[ORCA ALERTS DEBUG] Alert IDs:`, normalized.alerts?.map(a => a.id));
 
-    notifyAssessmentListeners(normalized);
+    setAssessmentState(normalized);
     return normalized;
   } catch (error: any) {
     console.error('ORCA API request failed:', error);
@@ -370,7 +328,7 @@ export async function queryOrcaAssistant(
     conversation_history: context?.conversation_history,
   };
 
-  latestRequestId = clientRequestId;
+  setLatestRequestId(clientRequestId);
 
   try {
     const endpoint = `${BASE_URL.replace(/\/+$/, '')}/api/orca/assess`;
@@ -399,6 +357,14 @@ export async function queryOrcaAssistant(
 
     const data = await response.json();
     const normalized = normalizeBackendResponse(data, reqBody);
+
+    console.log(`[ORCA CHAT QUERY DATA] Request ID: ${data.request_id || clientRequestId}`);
+    console.log(`[ORCA CHAT QUERY DATA] Status: ${normalized.assessment.status}, Score: ${normalized.assessment.risk_score}/100, Intent: ${data.intent}`);
+
+    // If this query generated safety or marine condition assessment, notify app listeners
+    if (data.risk_required || normalized.display?.risk_assessment || data.intent === 'safety_assessment') {
+      setAssessmentState(normalized);
+    }
 
     const answerText = data.recommendation || normalized.assessment.summary || 'Assessment received from ORCA.';
 
