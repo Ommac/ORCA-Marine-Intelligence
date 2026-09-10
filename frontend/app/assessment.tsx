@@ -29,15 +29,17 @@ import { ResponsiveContainer } from '../components/ResponsiveContainer';
 import {
   getCurrentAssessment,
   subscribeToAssessment,
+  getSelectedPFZId,
+  setSelectedPFZId,
 } from '../services/api';
 import { getTodayDateISO } from '../services/tripStore';
-import { OrcaResponse } from '../types/orca';
+import { OrcaResponse, PFZCandidate, PFZData } from '../types/orca';
 import { formatDateToFisherman } from '../utils/formatting';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../constants/theme';
 
 export default function AssessmentScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams();
+  const params = useLocalSearchParams<{ pfzId?: string; rank?: string; locationName?: string }>();
   const [data, setData] = useState<OrcaResponse>(getCurrentAssessment());
 
   useEffect(() => {
@@ -48,10 +50,57 @@ export default function AssessmentScreen() {
     return () => unsubscribe();
   }, []);
 
+  const allCandidates: PFZCandidate[] = React.useMemo(() => {
+    const list = data.pfz?.top_candidates || (data as any).top_pfz || [];
+    return Array.isArray(list) ? list : [];
+  }, [data]);
+
+  const activePfzId = (params.pfzId as string) || getSelectedPFZId();
+  const activeRank = params.rank ? parseInt(params.rank as string, 10) : undefined;
+
+  const selectedCandidate = React.useMemo(() => {
+    if (activePfzId) {
+      const found = allCandidates.find(
+        (c) => c.id === activePfzId || `pfz-${c.rank}` === activePfzId || `pfz-cand-${c.rank}` === activePfzId
+      );
+      if (found) return found;
+    }
+    if (activeRank) {
+      const found = allCandidates.find((c) => c.rank === activeRank);
+      if (found) return found;
+    }
+    return allCandidates[0] || null;
+  }, [allCandidates, activePfzId, activeRank]);
+
+  const activePfzData: PFZData = React.useMemo(() => {
+    if (!selectedCandidate) return data.pfz;
+    return {
+      ...data.pfz,
+      available: true,
+      nearest: {
+        latitude: selectedCandidate.coordinates.latitude,
+        longitude: selectedCandidate.coordinates.longitude,
+        distance_km: selectedCandidate.distance_km,
+        bearing_degrees: selectedCandidate.bearing_degrees,
+        direction: selectedCandidate.direction,
+      },
+      geometry: selectedCandidate.geometry || data.pfz.geometry,
+      metadata: {
+        ...(data.pfz.metadata || {}),
+        category: selectedCandidate.category,
+        rank: selectedCandidate.rank,
+        recommendation_reason: selectedCandidate.recommendation_reason,
+      },
+      selected_rank: selectedCandidate.rank,
+    };
+  }, [data.pfz, selectedCandidate]);
+
   const handleShare = async () => {
     try {
+      const dist = activePfzData.nearest?.distance_km ?? data.pfz.nearest?.distance_km ?? 'N/A';
+      const rankText = selectedCandidate ? ` (PFZ #${selectedCandidate.rank})` : '';
       await Share.share({
-        message: `ORCA Marine Assessment for ${data.request?.date || 'Today'}: Overall condition is ${data.assessment.status} (Risk Score: ${data.assessment.risk_score}/100). Nearest Fishing Zone: ${data.pfz.nearest?.distance_km ?? 'N/A'} km away.`,
+        message: `ORCA Marine Assessment for ${data.request?.date || 'Today'}: Overall condition is ${data.assessment.status} (Risk Score: ${data.assessment.risk_score}/100). Nearest Fishing Zone${rankText}: ${dist} km away.`,
       });
     } catch {
       // ignore
@@ -59,6 +108,9 @@ export default function AssessmentScreen() {
   };
 
   const handleViewOnMap = () => {
+    if (selectedCandidate) {
+      setSelectedPFZId(selectedCandidate.id);
+    }
     router.push('/(tabs)/map');
   };
 
@@ -113,7 +165,7 @@ export default function AssessmentScreen() {
           <RiskCard assessment={data.assessment} />
 
           {/* 2. Potential Fishing Zone (PFZ) Card */}
-          <PFZCard pfz={data.pfz} onViewOnMap={handleViewOnMap} />
+          <PFZCard pfz={activePfzData} onViewOnMap={handleViewOnMap} />
 
           {/* 3. Sea Conditions Grid Card */}
           <MarineConditionsCard marine={data.marine} />

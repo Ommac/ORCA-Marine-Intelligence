@@ -256,3 +256,29 @@ export interface BoatSizeOption {
   sublabel: string;
   boat_width_m: number;
 }
+
+export interface ActiveMapLayers {
+  pfz: boolean;
+  fishingLocation: boolean;
+  distance: boolean;
+  myLocation?: boolean;
+  tideStations?: boolean;
+  marineWeather?: boolean;
+}
+
+export type SelectedMapObjectType = 'pfz' | 'fishingLocation' | 'tideStation' | 'myLocation';
+
+export interface SelectedMapObject {
+  type: SelectedMapObjectType;
+  title: string;
+  subtitle?: string;
+  latitude: number;
+  longitude: number;
+  distanceFromFishermanKm?: number;
+  bearingFromFishermanDegrees?: number;
+  directionFromFisherman?: string;
+  metadata?: Record<string, any>;
+  candidate?: PFZCandidate;
+  marine?: MarineData;
+}
+

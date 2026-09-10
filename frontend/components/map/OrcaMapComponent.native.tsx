@@ -1,134 +1,526 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import MapView, { Callout, Circle, Marker, Polygon, Polyline, Region } from 'react-native-maps';
-import { Minus, Navigation, Plus } from 'lucide-react-native';
-import { OrcaResponse, PFZNearest } from '../../types/orca';
-import { NormalizedPFZFeature, PFZLatLng, calculatePFZBounds, normalizePFZFeatures } from '../../utils/pfzGeometry';
-import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
+import {
+  ActivityIndicator,
+  ImageBackground,
+  PanResponder,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import Svg, { Line, Circle as SvgCircle } from 'react-native-svg';
+import {
+  AlertCircle,
+  Minus,
+  Plus,
+  Compass,
+  Crosshair,
+} from 'lucide-react-native';
+import {
+  OrcaResponse,
+  PFZNearest,
+  PFZCandidate,
+  ActiveMapLayers,
+  SelectedMapObject,
+} from '../../types/orca';
+import { COLORS, RADIUS, SHADOWS, TYPOGRAPHY } from '../../constants/theme';
+import { DEFAULT_ZOOM } from '../../constants/map';
+import { subscribeToMapFocus, MapFocusTarget } from '../../services/mapFocusStore';
+import {
+  calculateDistanceKm,
+  calculateBearing,
+  getCardinalDirection,
+  formatCoordinates,
+} from '../../utils/geo';
 
-export interface MapViewProps {
-  response: OrcaResponse;
-  activeLayers?: { pfz: boolean; myLocation: boolean; distance: boolean };
+export interface NativeMapProps {
+  response?: OrcaResponse | null;
+  activeLayers?: ActiveMapLayers;
+  selectedObject?: SelectedMapObject | null;
+  onSelectObject?: (obj: SelectedMapObject | null) => void;
   onSelectPFZ?: (nearest?: PFZNearest) => void;
   onViewDetails?: () => void;
 }
 
-function PFZCallout({ properties }: { properties: Record<string, unknown> }) {
-  const findValue = (...keys: string[]) => keys.map((key) => properties[key]).find((value) => value !== undefined && value !== null && value !== '');
-  const entries = [
-    ['Sector', findValue('SECTORNAME', 'sectorname', 'category')],
-    ['Year', findValue('Year', 'data_year')],
-    ['Julian Day', findValue('Julian_day', 'julian_day')],
-    ['Length', findValue('Length', 'length')],
-    ['UID', findValue('UID', 'uid')],
-  ].filter((entry): entry is [string, unknown] => entry[1] !== undefined);
-  return <Callout><Text style={styles.calloutTitle}>PFZ Advisory</Text>{entries.map(([label, value]) => <Text key={label}>{label}: {String(value)}</Text>)}</Callout>;
-}
+type Coordinates = { latitude: number; longitude: number };
+const clamp = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, value));
 
-function DirectionArrows({ lines }: { lines: PFZLatLng[][] }) {
-  const arrows = lines.flatMap((line, lineIndex) => {
-    const step = Math.max(1, Math.ceil((line.length - 1) / 8));
-    return line.slice(0, -1).reduce<{ position: PFZLatLng; rotation: number; key: string }[]>((items, point, index) => {
-      if (index % step !== 0) return items;
-      const next = line[index + 1];
-      items.push({ position: [(point[0] + next[0]) / 2, (point[1] + next[1]) / 2], rotation: Math.atan2(next[1] - point[1], next[0] - point[0]) * (180 / Math.PI), key: `native-arrow-${lineIndex}-${index}` });
-      return items;
-    }, []);
-  });
-  return <>{arrows.map((arrow) => <Marker key={arrow.key} coordinate={{ latitude: arrow.position[0], longitude: arrow.position[1] }} rotation={arrow.rotation} flat anchor={{ x: 0.5, y: 0.5 }}><Text style={styles.arrow}>➤</Text></Marker>)}</>;
-}
+const defaultActiveLayers: ActiveMapLayers = {
+  pfz: true,
+  fishingLocation: true,
+  distance: true,
+};
 
-function PFZFeatureLayer({ feature }: { feature: NormalizedPFZFeature }) {
-  const { geometry, properties } = feature;
-  if (geometry.type === 'LineString') {
-    const coordinates = geometry.coordinates.map(([latitude, longitude]) => ({ latitude, longitude }));
-    return <><Polyline coordinates={coordinates} strokeColor="#10B981" strokeWidth={4} tappable /><Marker coordinate={coordinates[0]}><PFZCallout properties={properties} /></Marker><DirectionArrows lines={[geometry.coordinates]} /></>;
-  }
-  if (geometry.type === 'MultiLineString') {
-    return <>{geometry.coordinates.map((line, index) => { const coordinates = line.map(([latitude, longitude]) => ({ latitude, longitude })); return <React.Fragment key={`${feature.id}-line-${index}`}><Polyline coordinates={coordinates} strokeColor="#10B981" strokeWidth={4} tappable /><Marker coordinate={coordinates[0]}><PFZCallout properties={properties} /></Marker><DirectionArrows lines={[line]} /></React.Fragment>; })}</>;
-  }
-  if (geometry.type === 'Polygon') {
-    const coordinates = geometry.coordinates[0].map(([latitude, longitude]) => ({ latitude, longitude }));
-    return <><Polygon coordinates={coordinates} strokeColor="#10B981" fillColor="rgba(16,185,129,0.2)" strokeWidth={3} tappable /><Marker coordinate={coordinates[0]}><PFZCallout properties={properties} /></Marker></>;
-  }
-  if (geometry.type === 'MultiPolygon') {
-    return <>{geometry.coordinates.map((polygon, index) => { const coordinates = polygon[0].map(([latitude, longitude]) => ({ latitude, longitude })); return <React.Fragment key={`${feature.id}-polygon-${index}`}><Polygon coordinates={coordinates} strokeColor="#10B981" fillColor="rgba(16,185,129,0.2)" strokeWidth={3} tappable /><Marker coordinate={coordinates[0]}><PFZCallout properties={properties} /></Marker></React.Fragment>; })}</>;
-  }
-  if (geometry.type === 'Point') return <Marker coordinate={{ latitude: geometry.coordinates[0], longitude: geometry.coordinates[1] }}><PFZCallout properties={properties} /></Marker>;
-  return <>{geometry.coordinates.map((point, index) => <Marker key={`${feature.id}-point-${index}`} coordinate={{ latitude: point[0], longitude: point[1] }}><PFZCallout properties={properties} /></Marker>)}</>;
-}
-
-function featureCoordinates(features: NormalizedPFZFeature[]): PFZLatLng[] {
-  const positions: PFZLatLng[] = [];
-  features.forEach(({ geometry }) => {
-    const collect = (value: unknown): void => {
-      if (Array.isArray(value) && typeof value[0] === 'number') positions.push(value as PFZLatLng);
-      else if (Array.isArray(value)) value.forEach(collect);
-    };
-    collect(geometry.coordinates);
-  });
-  return positions;
-}
-
-export const OrcaMapComponent: React.FC<MapViewProps> = ({ response, activeLayers = { pfz: true, myLocation: true, distance: true }, onSelectPFZ }) => {
-  const mapRef = useRef<MapView | null>(null);
-  const [mapReady, setMapReady] = useState(false);
-  const fisherLat = response.request?.latitude ?? 0;
-  const fisherLon = response.request?.longitude ?? 0;
-  const hasLivePFZ = response.pfz.metadata !== undefined;
-  const features = useMemo(() => hasLivePFZ ? normalizePFZFeatures(response.pfz.geometry, response.pfz.metadata) : [], [hasLivePFZ, response.pfz.geometry, response.pfz.metadata]);
-  const bounds = useMemo(() => calculatePFZBounds(features), [features]);
-  const center: Region = { latitude: fisherLat, longitude: fisherLon, latitudeDelta: 4, longitudeDelta: 4 };
-
-  useEffect(() => {
-    const coordinates = featureCoordinates(features);
-    if (mapRef.current && coordinates.length) mapRef.current.fitToCoordinates(coordinates.map(([latitude, longitude]) => ({ latitude, longitude })), { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: true });
-  }, [features, bounds]);
-
-  const recenter = () => {
-    const coordinates = featureCoordinates(features);
-    if (mapRef.current && coordinates.length) mapRef.current.fitToCoordinates(coordinates.map(([latitude, longitude]) => ({ latitude, longitude })), { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: true });
-    else mapRef.current?.animateToRegion(center, 600);
+export const OrcaMapComponent: React.FC<NativeMapProps> = ({
+  response,
+  activeLayers = defaultActiveLayers,
+  selectedObject,
+  onSelectObject,
+  onSelectPFZ,
+}) => {
+  const fisher: Coordinates = {
+    latitude: response?.request?.latitude ?? 19.72,
+    longitude: response?.request?.longitude ?? 72.70,
   };
 
-  return <View style={styles.container}>
-    <MapView ref={mapRef} style={styles.fullMap} mapType="satellite" initialRegion={center} onMapReady={() => setMapReady(true)}>
-      {activeLayers.pfz && features.map((feature) => <PFZFeatureLayer key={feature.id} feature={feature} />)}
-      {activeLayers.myLocation && <Circle center={{ latitude: fisherLat, longitude: fisherLon }} radius={500} strokeColor="#38BDF8" fillColor="rgba(10,37,64,0.7)" />}
-      {activeLayers.myLocation && <Marker coordinate={{ latitude: fisherLat, longitude: fisherLon }} title="Fishing Location" />}
-      {activeLayers.pfz && (response.pfz.top_candidates || []).map((cand) => (
-        <Marker
-          key={cand.id || `native-cand-${cand.rank}`}
-          coordinate={{ latitude: cand.coordinates.latitude, longitude: cand.coordinates.longitude }}
-          pinColor={cand.rank === 1 ? 'green' : 'gold'}
-          title={`${cand.recommended ? '🥇 ' : ''}${cand.label || `PFZ ${cand.rank}`} (${cand.distance_km.toFixed(1)} km ${cand.direction})`}
-          description={cand.recommendation_reason || `Coordinates: ${cand.coordinates.latitude.toFixed(3)}, ${cand.coordinates.longitude.toFixed(3)}`}
-          onPress={() => onSelectPFZ?.(cand.nearest_point || { latitude: cand.coordinates.latitude, longitude: cand.coordinates.longitude, distance_km: cand.distance_km })}
-        />
-      ))}
-      {activeLayers.pfz && (!response.pfz.top_candidates || response.pfz.top_candidates.length === 0) && response.pfz.nearest && (
-        <Marker coordinate={{ latitude: response.pfz.nearest.latitude, longitude: response.pfz.nearest.longitude }} title="Nearest PFZ" onPress={() => onSelectPFZ?.(response.pfz.nearest)} />
-      )}
-    </MapView>
-    {!mapReady && <View style={styles.loadingOverlay}><Text style={styles.loadingText}>Loading map...</Text></View>}
-    {mapReady && !features.length && <View style={styles.emptyOverlay}><Text style={styles.emptyText}>{response.pfz.message ? 'Unable to load PFZ data' : hasLivePFZ ? 'No PFZ data available' : 'Loading PFZ data...'}</Text></View>}
-    <View style={styles.controlsCol}>
-      <TouchableOpacity style={styles.controlBtn} onPress={() => mapRef.current?.getCamera().then((camera) => mapRef.current?.animateCamera({ ...camera, zoom: (camera.zoom || 9) + 1 }))} accessibilityLabel="Zoom In"><Plus size={20} color={COLORS.textPrimary} /></TouchableOpacity>
-      <TouchableOpacity style={styles.controlBtn} onPress={() => mapRef.current?.getCamera().then((camera) => mapRef.current?.animateCamera({ ...camera, zoom: Math.max((camera.zoom || 9) - 1, 1) }))} accessibilityLabel="Zoom Out"><Minus size={20} color={COLORS.textPrimary} /></TouchableOpacity>
-      <TouchableOpacity style={styles.controlBtn} onPress={recenter} accessibilityLabel="Recenter Map"><Navigation size={18} color={COLORS.oceanBlue} /></TouchableOpacity>
+  const [center, setCenter] = useState<Coordinates>(fisher);
+  const [zoom, setZoom] = useState(DEFAULT_ZOOM);
+  const [imageLoading, setImageLoading] = useState(true);
+  const [imageError, setImageError] = useState(false);
+  const [focusTarget, setFocusTarget] = useState<MapFocusTarget | null>(null);
+
+  const top3Candidates = useMemo<PFZCandidate[]>(() => {
+    let rawCands: PFZCandidate[] = [];
+
+    if (response?.pfz?.top_candidates && response.pfz.top_candidates.length > 0) {
+      rawCands = response.pfz.top_candidates;
+    } else if (response?.top_pfz && response.top_pfz.length > 0) {
+      rawCands = response.top_pfz;
+    } else if (response?.pfz?.nearest) {
+      const nr = response.pfz.nearest;
+      rawCands = [
+        {
+          id: 'pfz-cand-1',
+          rank: 1,
+          label: 'PFZ #1',
+          distance_km: nr.distance_km,
+          bearing_degrees: nr.bearing_degrees,
+          direction: nr.direction,
+          coordinates: { latitude: nr.latitude, longitude: nr.longitude },
+          recommended: true,
+        },
+      ];
+    }
+
+    const sliced = rawCands.slice(0, 3);
+
+    return sliced.map((cand, idx) => {
+      const rank = cand.rank || idx + 1;
+      const dist = calculateDistanceKm(fisher.latitude, fisher.longitude, cand.coordinates.latitude, cand.coordinates.longitude);
+      const bearing = calculateBearing(fisher.latitude, fisher.longitude, cand.coordinates.latitude, cand.coordinates.longitude);
+      const dir = getCardinalDirection(bearing);
+
+      return {
+        ...cand,
+        rank,
+        label: `PFZ #${rank}`,
+        distance_km: dist,
+        bearing_degrees: bearing,
+        direction: dir,
+        recommended: rank === 1,
+      };
+    });
+  }, [response?.pfz?.top_candidates, response?.top_pfz, response?.pfz?.nearest, fisher.latitude, fisher.longitude]);
+
+  const lonSpan = Math.max(360 / Math.pow(2, zoom), 0.025);
+  const latSpan = Math.max(lonSpan * 0.62, 0.015);
+
+  useEffect(() => {
+    setCenter(fisher);
+  }, [fisher.latitude, fisher.longitude]);
+
+  useEffect(() => {
+    return subscribeToMapFocus((target) => {
+      setFocusTarget(target);
+      if (target?.coordinates) {
+        setCenter(target.coordinates);
+        setZoom(target.zoom || 11);
+      }
+    });
+  }, []);
+
+  const imageUrl = useMemo(() => {
+    const minLon = clamp(center.longitude - lonSpan / 2, -180, 180);
+    const maxLon = clamp(center.longitude + lonSpan / 2, -180, 180);
+    const minLat = clamp(center.latitude - latSpan / 2, -85, 85);
+    const maxLat = clamp(center.latitude + latSpan / 2, -85, 85);
+    return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${minLon},${minLat},${maxLon},${maxLat}&bboxSR=4326&imageSR=4326&size=960,600&format=png32&transparent=false&f=image`;
+  }, [center.latitude, center.longitude, latSpan, lonSpan]);
+
+  useEffect(() => {
+    setImageLoading(true);
+    setImageError(false);
+  }, [imageUrl]);
+
+  const panStartRef = useRef<{ lat: number; lon: number }>({ lat: center.latitude, lon: center.longitude });
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gestureState) =>
+          Math.abs(gestureState.dx) > 6 || Math.abs(gestureState.dy) > 6,
+        onPanResponderGrant: () => {
+          panStartRef.current = { lat: center.latitude, lon: center.longitude };
+        },
+        onPanResponderMove: (_, gestureState) => {
+          const deltaLon = -(gestureState.dx / 350) * lonSpan;
+          const deltaLat = (gestureState.dy / 300) * latSpan;
+          setCenter({
+            latitude: clamp(panStartRef.current.lat + deltaLat, -85, 85),
+            longitude: clamp(panStartRef.current.lon + deltaLon, -180, 180),
+          });
+        },
+      }),
+    [center.latitude, center.longitude, latSpan, lonSpan]
+  );
+
+  const projectPercent = (coordinates: Coordinates) => ({
+    xPct: clamp(((coordinates.longitude - (center.longitude - lonSpan / 2)) / lonSpan) * 100, 3, 97),
+    yPct: clamp(((center.latitude + latSpan / 2 - coordinates.latitude) / latSpan) * 100, 3, 97),
+  });
+
+  const project = (coordinates: Coordinates) => {
+    const { xPct, yPct } = projectPercent(coordinates);
+    return {
+      left: `${xPct}%` as const,
+      top: `${yPct}%` as const,
+    };
+  };
+
+  const selectedCandidate = useMemo(() => {
+    if (selectedObject?.type !== 'pfz') return null;
+    if (selectedObject.candidate) {
+      return top3Candidates.find((c) => c.rank === selectedObject.candidate?.rank) || selectedObject.candidate;
+    }
+    return null;
+  }, [selectedObject, top3Candidates]);
+
+  const handleSelectCandidate = (candidate: PFZCandidate) => {
+    if (selectedObject?.type === 'pfz' && selectedObject.candidate?.rank === candidate.rank) {
+      onSelectObject?.(null);
+      return;
+    }
+
+    const dist = calculateDistanceKm(fisher.latitude, fisher.longitude, candidate.coordinates.latitude, candidate.coordinates.longitude);
+    const bearing = calculateBearing(fisher.latitude, fisher.longitude, candidate.coordinates.latitude, candidate.coordinates.longitude);
+    const dir = getCardinalDirection(bearing);
+
+    const selected: SelectedMapObject = {
+      type: 'pfz',
+      title: `PFZ #${candidate.rank}`,
+      subtitle: candidate.recommended ? 'Recommended PFZ Zone' : `Candidate #${candidate.rank}`,
+      latitude: candidate.coordinates.latitude,
+      longitude: candidate.coordinates.longitude,
+      distanceFromFishermanKm: dist,
+      bearingFromFishermanDegrees: bearing,
+      directionFromFisherman: dir,
+      candidate,
+      metadata: {
+        category: candidate.category,
+        valid_until: candidate.valid_until,
+      },
+    };
+
+    onSelectObject?.(selected);
+    onSelectPFZ?.({
+      latitude: candidate.coordinates.latitude,
+      longitude: candidate.coordinates.longitude,
+      distance_km: dist,
+      bearing_degrees: bearing,
+      direction: dir,
+    });
+  };
+
+  const handleSelectFishingSpot = () => {
+    if (selectedObject?.type === 'fishingLocation') {
+      onSelectObject?.(null);
+      return;
+    }
+
+    onSelectObject?.({
+      type: 'fishingLocation',
+      title: 'Selected Fishing Location',
+      subtitle: formatCoordinates(fisher.latitude, fisher.longitude),
+      latitude: fisher.latitude,
+      longitude: fisher.longitude,
+      distanceFromFishermanKm: 0,
+      bearingFromFishermanDegrees: 0,
+      directionFromFisherman: 'Spot',
+      marine: response?.marine,
+    });
+  };
+
+  const handleRecenter = () => {
+    setFocusTarget(null);
+    setCenter(fisher);
+    setZoom(DEFAULT_ZOOM);
+  };
+
+  const fisherProj = projectPercent(fisher);
+
+  return (
+    <View style={styles.container} {...panResponder.panHandlers}>
+      <ImageBackground
+        source={{ uri: imageUrl }}
+        style={styles.map}
+        resizeMode="cover"
+        onLoadEnd={() => setImageLoading(false)}
+        onError={() => {
+          setImageLoading(false);
+          setImageError(true);
+        }}
+      >
+        {/* Selected Route Line: ONLY rendered for the single selected PFZ */}
+        {activeLayers.distance && selectedCandidate && (() => {
+          const candProj = projectPercent(selectedCandidate.coordinates);
+          return (
+            <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
+              <Line
+                x1={`${fisherProj.xPct}%`}
+                y1={`${fisherProj.yPct}%`}
+                x2={`${candProj.xPct}%`}
+                y2={`${candProj.yPct}%`}
+                stroke="#10B981"
+                strokeWidth="3.5"
+                strokeDasharray="8, 6"
+                opacity={0.95}
+              />
+            </Svg>
+          );
+        })()}
+
+        {activeLayers.fishingLocation && (
+          <TouchableOpacity
+            style={[styles.fishingMarker, project(fisher)]}
+            onPress={handleSelectFishingSpot}
+            accessibilityLabel="Selected Fishing Location"
+            activeOpacity={0.8}
+          >
+            <Text style={styles.fishingMarkerText}>🎣</Text>
+          </TouchableOpacity>
+        )}
+
+        {activeLayers.pfz &&
+          top3Candidates.map((cand) => {
+            const isSelected =
+              selectedObject?.type === 'pfz' &&
+              selectedObject.candidate?.rank === cand.rank;
+
+            return (
+              <TouchableOpacity
+                key={`native-cand-${cand.rank}`}
+                style={[
+                  styles.pfzMarker,
+                  project(cand.coordinates),
+                  isSelected
+                    ? styles.focusedPfzMarker
+                    : cand.recommended
+                    ? styles.recommendedPfzMarker
+                    : styles.secondaryPfzMarker,
+                ]}
+                onPress={() => handleSelectCandidate(cand)}
+                accessibilityLabel={`PFZ Zone rank ${cand.rank}`}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.pfzMarkerText,
+                    isSelected && styles.focusedPfzMarkerText,
+                  ]}
+                >
+                  {isSelected ? `★ PFZ #${cand.rank}` : `● PFZ #${cand.rank}`}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+
+        {imageLoading && (
+          <View style={styles.loading}>
+            <ActivityIndicator size="large" color="#FFF" />
+          </View>
+        )}
+
+        {imageError && (
+          <View style={styles.error}>
+            <AlertCircle size={24} color="#F87171" />
+            <Text style={styles.errorText}>Imagery unavailable</Text>
+          </View>
+        )}
+      </ImageBackground>
+
+      <View style={styles.controls} pointerEvents="box-none">
+        <TouchableOpacity
+          style={styles.control}
+          onPress={() => setZoom((value) => Math.min(value + 1, 14))}
+          accessibilityLabel="Zoom In"
+        >
+          <Plus size={18} color={COLORS.textPrimary} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.control}
+          onPress={() => setZoom((value) => Math.max(value - 1, 4))}
+          accessibilityLabel="Zoom Out"
+        >
+          <Minus size={18} color={COLORS.textPrimary} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.control}
+          onPress={handleRecenter}
+          accessibilityLabel="Recenter on Selected Fishing Location"
+        >
+          <Crosshair size={18} color={COLORS.oceanBlue} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Clean Top-Right Summary Chip for Selected PFZ or Nearest PFZ */}
+      {selectedCandidate ? (
+        <View style={styles.nearestChip} pointerEvents="box-none">
+          <Compass size={13} color="#15803D" />
+          <Text style={styles.nearestChipText}>
+            PFZ #{selectedCandidate.rank}: {selectedCandidate.distance_km.toFixed(1)} km {selectedCandidate.direction}
+          </Text>
+        </View>
+      ) : top3Candidates.length > 0 ? (
+        <View style={styles.nearestChip} pointerEvents="box-none">
+          <Compass size={13} color="#15803D" />
+          <Text style={styles.nearestChipText}>
+            PFZ: {top3Candidates[0].distance_km.toFixed(1)} km {top3Candidates[0].direction}
+          </Text>
+        </View>
+      ) : null}
     </View>
-  </View>;
+  );
 };
 
 const styles = StyleSheet.create({
-  container: { height: 480, width: '100%', borderRadius: RADIUS.xl, overflow: 'hidden', position: 'relative', backgroundColor: '#0F172A', borderWidth: 1.5, borderColor: COLORS.skyBlueBorder, ...SHADOWS.md },
-  fullMap: { flex: 1 },
-  arrow: { color: '#FDE047', fontSize: 22, textShadowColor: '#064E3B', textShadowRadius: 3 },
-  calloutTitle: { fontWeight: '700', marginBottom: 4 },
-  loadingOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(15, 23, 42, 0.85)', justifyContent: 'center', alignItems: 'center', zIndex: 20 },
-  loadingText: { ...TYPOGRAPHY.bodySmall, color: '#F8FAFC', fontWeight: '700' },
-  emptyOverlay: { position: 'absolute', top: 16, right: 16, backgroundColor: 'rgba(15, 23, 42, 0.86)', padding: SPACING.sm, borderRadius: RADIUS.md, zIndex: 5 },
-  emptyText: { ...TYPOGRAPHY.caption, color: '#F8FAFC', fontWeight: '700' },
-  controlsCol: { position: 'absolute', top: 14, left: 14, backgroundColor: 'rgba(255, 255, 255, 0.95)', borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border, zIndex: 10, ...SHADOWS.md },
-  controlBtn: { width: 42, height: 42, justifyContent: 'center', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: COLORS.borderLight },
+  container: {
+    height: 480,
+    width: '100%',
+    borderRadius: RADIUS.xl,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: '#0F172A',
+    borderWidth: 1.5,
+    borderColor: '#334155',
+    ...SHADOWS.md,
+  },
+  map: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  loading: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+  },
+  error: {
+    position: 'absolute',
+    left: 40,
+    right: 40,
+    top: '40%',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: RADIUS.md,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    gap: 6,
+  },
+  errorText: {
+    ...TYPOGRAPHY.bodySmall,
+    color: '#F87171',
+    textAlign: 'center',
+    fontWeight: '700',
+  },
+  fishingMarker: {
+    position: 'absolute',
+    width: 38,
+    height: 38,
+    marginLeft: -19,
+    marginTop: -19,
+    borderRadius: 19,
+    backgroundColor: '#0066CC',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...SHADOWS.md,
+    zIndex: 10,
+  },
+  fishingMarkerText: {
+    fontSize: 18,
+  },
+  pfzMarker: {
+    position: 'absolute',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginLeft: -32,
+    marginTop: -14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: '#FFF',
+    ...SHADOWS.md,
+    zIndex: 9,
+  },
+  recommendedPfzMarker: {
+    backgroundColor: '#10B981',
+  },
+  secondaryPfzMarker: {
+    backgroundColor: '#0284C7',
+  },
+  focusedPfzMarker: {
+    backgroundColor: '#10B981',
+    borderColor: '#FEF08A',
+    borderWidth: 2.5,
+  },
+  pfzMarkerText: {
+    color: '#FFF',
+    fontWeight: '900',
+    fontSize: 11,
+  },
+  focusedPfzMarkerText: {
+    color: '#FFFFFF',
+  },
+  controls: {
+    position: 'absolute',
+    left: 14,
+    top: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    zIndex: 20,
+    overflow: 'hidden',
+    ...SHADOWS.md,
+  },
+  control: {
+    width: 38,
+    height: 38,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+    backgroundColor: '#FFFFFF',
+  },
+  nearestChip: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: RADIUS.full,
+    borderWidth: 1.5,
+    borderColor: '#86EFAC',
+    zIndex: 20,
+    ...SHADOWS.md,
+  },
+  nearestChipText: {
+    ...TYPOGRAPHY.caption,
+    color: '#15803D',
+    fontWeight: '800',
+    fontSize: 11,
+  },
 });

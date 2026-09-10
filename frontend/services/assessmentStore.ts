@@ -27,9 +27,19 @@ export const EMPTY_INITIAL_ASSESSMENT: OrcaResponse = {
 let currentAssessmentState: OrcaResponse = { ...EMPTY_INITIAL_ASSESSMENT };
 const listeners: Set<AssessmentListener> = new Set();
 let latestRequestId: string | null = null;
+let selectedPFZIdState: string | null = null;
 
 export function getCurrentAssessment(): OrcaResponse {
   return currentAssessmentState;
+}
+
+export function getSelectedPFZId(): string | null {
+  return selectedPFZIdState;
+}
+
+export function setSelectedPFZId(id: string | null): void {
+  selectedPFZIdState = id;
+  notifyListeners(currentAssessmentState);
 }
 
 export function getLatestRequestId(): string | null {
@@ -59,6 +69,7 @@ export function setAssessmentState(response: OrcaResponse): void {
 
 export function clearCurrentAssessment(): void {
   latestRequestId = null;
+  selectedPFZIdState = null;
   currentAssessmentState = { ...EMPTY_INITIAL_ASSESSMENT };
   notifyListeners(currentAssessmentState);
 }

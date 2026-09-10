@@ -1,25 +1,23 @@
 import React from 'react';
-import { OrcaResponse, PFZNearest } from '../types/orca';
+import { OrcaResponse, PFZNearest, ActiveMapLayers, SelectedMapObject } from '../types/orca';
 import { OrcaMapComponent } from './map/OrcaMapComponent';
 
 export interface MapViewProps {
   response?: OrcaResponse | null;
-  activeLayers?: {
-    pfz: boolean;
-    myLocation: boolean;
-    distance: boolean;
-  };
+  activeLayers?: ActiveMapLayers;
+  selectedObject?: SelectedMapObject | null;
+  onSelectObject?: (obj: SelectedMapObject | null) => void;
   onSelectPFZ?: (nearest?: PFZNearest) => void;
   onViewDetails?: () => void;
 }
 
 /**
- * Universal Geographic Satellite Map Component
+ * Universal Marine Geographic Satellite Map Component
  * Delegates platform map rendering via Metro platform extension resolution:
- * - OrcaMapComponent.web.tsx on Web (MapLibre GL JS)
- * - OrcaMapComponent.native.tsx on Native Android/iOS (@maplibre/maplibre-react-native)
- * Both platforms use online ArcGIS World Imagery Satellite tiles.
+ * - OrcaMapComponent.web.tsx on Web (React Leaflet + ArcGIS Satellite Tiles)
+ * - OrcaMapComponent.native.tsx on Native Android/iOS (ArcGIS Satellite Map)
  */
 export const OrcaMapView: React.FC<MapViewProps> = (props) => {
   return <OrcaMapComponent {...props} />;
 };
+

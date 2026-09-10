@@ -5,6 +5,8 @@
  * Consumes and returns strictly normalized OrcaResponse objects from the live ORCA backend.
  */
 
+import { Platform, NativeModules } from 'react-native';
+import Constants from 'expo-constants';
 import { OrcaRequest, OrcaResponse, AssessmentStatus, SeverityLevel, Hazard, Alert } from '../types/orca';
 import { getMockResponseForRequest, MOCK_PALGHAR_RESPONSE } from '../mocks/orcaResponse';
 import { getActiveTrip, getTodayDateISO } from './tripStore';
@@ -15,15 +17,80 @@ import {
   setAssessmentState,
   setLatestRequestId,
   getLatestRequestId,
+  getSelectedPFZId,
+  setSelectedPFZId,
 } from './assessmentStore';
 
-export { getCurrentAssessment, subscribeToAssessment, clearCurrentAssessment };
+export {
+  getCurrentAssessment,
+  subscribeToAssessment,
+  clearCurrentAssessment,
+  getSelectedPFZId,
+  setSelectedPFZId,
+};
 
 // Configuration Flag: Set to false for live backend API calls (POST /api/orca/assess)
 export const USE_MOCK_API = false;
 
-// Backend Base URL configured via environment variable
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
+/**
+ * Resolves the backend API base URL dynamically.
+ * Priority & Smart Detection:
+ * 1. On Native Mobile (Android / iOS physical device or emulator):
+ *    Extracts host IP dynamically from active Metro scriptURL or Expo Constants hostUri,
+ *    ensuring immediate connectivity across any Wi-Fi network without manual IP editing.
+ * 2. On Web: Uses window.location.hostname (e.g. localhost:8000).
+ * 3. Fallback: EXPO_PUBLIC_API_URL or http://127.0.0.1:8000.
+ */
+export function getBaseUrl(): string {
+  // 1. Mobile Native (Android / iOS)
+  if (Platform.OS !== 'web') {
+    // Attempt 1: Extract host from React Native bundle scriptURL
+    const scriptURL = NativeModules?.SourceCode?.scriptURL;
+    if (typeof scriptURL === 'string' && scriptURL) {
+      const match = scriptURL.match(/^https?:\/\/([^/:]+)(?::\d+)?/);
+      if (match && match[1]) {
+        const host = match[1];
+        if (host !== 'localhost' && host !== '127.0.0.1') {
+          return `http://${host}:8000`;
+        }
+      }
+    }
+
+    // Attempt 2: Extract host from Expo Constants
+    const hostUri = Constants.expoConfig?.hostUri || (Constants as any).manifest2?.extra?.expoClient?.hostUri || (Constants as any).experienceUrl;
+    if (typeof hostUri === 'string' && hostUri) {
+      const cleanHost = hostUri.split(':')[0].replace(/^[a-z]+:\/\//i, '');
+      if (cleanHost && cleanHost !== 'localhost' && cleanHost !== '127.0.0.1') {
+        return `http://${cleanHost}:8000`;
+      }
+    }
+
+    // Attempt 3: Explicit environment variable
+    if (process.env.EXPO_PUBLIC_API_URL) {
+      return process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
+    }
+
+    // Default for Android USB adb reverse / localhost
+    return 'http://127.0.0.1:8000';
+  }
+
+  // 2. Web browser environment
+  if (typeof window !== 'undefined' && window.location?.hostname) {
+    const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return 'http://127.0.0.1:8000';
+    }
+    return `http://${host}:8000`;
+  }
+
+  // 3. Static fallback
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
+  }
+
+  return 'http://127.0.0.1:8000';
+}
+
 
 /**
  * Normalizes raw structured response from POST /api/orca/assess into OrcaResponse
@@ -213,8 +280,11 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
   // Track this as the latest request for race condition prevention
   setLatestRequestId(effectiveRequest.request_id || null);
 
+  const endpoint = `${getBaseUrl()}/api/orca/assess`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
+
   try {
-    const endpoint = `${BASE_URL.replace(/\/+$/, '')}/api/orca/assess`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -230,7 +300,10 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
         request_id: effectiveRequest.request_id,
         session_id: effectiveRequest.session_id,
       }),
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
@@ -247,7 +320,20 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
     setAssessmentState(normalized);
     return normalized;
   } catch (error: any) {
+    clearTimeout(timeoutId);
     console.error('ORCA API request failed:', error);
+    if (error?.name === 'AbortError') {
+      throw new Error(`ORCA request timed out connecting to ${endpoint}. Please verify the FastAPI backend is running.`);
+    }
+    if (
+      error?.message === 'Failed to fetch' ||
+      error?.message?.includes('NetworkError') ||
+      error?.message?.includes('fetch failed')
+    ) {
+      throw new Error(
+        `Unable to connect to ORCA backend at ${endpoint}. Please ensure the FastAPI backend is running on port 8000.`
+      );
+    }
     throw new Error(error?.message || 'ORCA could not fetch the latest conditions.');
   }
 }
@@ -330,8 +416,11 @@ export async function queryOrcaAssistant(
 
   setLatestRequestId(clientRequestId);
 
+  const endpoint = `${getBaseUrl()}/api/orca/assess`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
+
   try {
-    const endpoint = `${BASE_URL.replace(/\/+$/, '')}/api/orca/assess`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -348,7 +437,10 @@ export async function queryOrcaAssistant(
         session_id: reqBody.session_id,
         conversation_history: reqBody.conversation_history,
       }),
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
@@ -376,7 +468,20 @@ export async function queryOrcaAssistant(
       uiAction: normalized.ui_action,
     };
   } catch (error: any) {
+    clearTimeout(timeoutId);
     console.error('queryOrcaAssistant live backend error:', error);
+    if (error?.name === 'AbortError') {
+      throw new Error(`ORCA chat request timed out after 45s connecting to ${endpoint}. Please verify the FastAPI backend is running.`);
+    }
+    if (
+      error?.message === 'Failed to fetch' ||
+      error?.message?.includes('NetworkError') ||
+      error?.message?.includes('fetch failed')
+    ) {
+      throw new Error(
+        `Unable to connect to ORCA backend at ${endpoint}. Please ensure the FastAPI backend is running on port 8000.`
+      );
+    }
     throw error;
   }
 }

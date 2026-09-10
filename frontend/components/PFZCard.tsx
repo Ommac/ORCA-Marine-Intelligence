@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Fish, MapPin, Compass, ArrowUpRight } from 'lucide-react-native';
 import { PFZData } from '../types/orca';
 import { formatDistance } from '../utils/formatting';
+import { formatCoordinates } from '../utils/geo';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../constants/theme';
 
 interface PFZCardProps {
@@ -12,6 +13,9 @@ interface PFZCardProps {
 
 export const PFZCard: React.FC<PFZCardProps> = ({ pfz, onViewOnMap }) => {
   const isAvailable = pfz && pfz.available && pfz.nearest;
+  const rankNum = pfz?.selected_rank || (pfz?.metadata as any)?.rank || 1;
+  const titleText = `Fishing Zone • PFZ #${rankNum}`;
+  const recReason = (pfz?.metadata as any)?.recommendation_reason;
 
   return (
     <View style={styles.card}>
@@ -21,14 +25,18 @@ export const PFZCard: React.FC<PFZCardProps> = ({ pfz, onViewOnMap }) => {
             <Fish size={22} color="#16A34A" strokeWidth={2.4} />
           </View>
           <View>
-            <Text style={styles.title}>Fishing Zone</Text>
-            <Text style={styles.subtitle}>Latest Satellite Observation (INCOIS)</Text>
+            <Text style={styles.title}>{titleText}</Text>
+            <Text style={styles.subtitle}>
+              {rankNum === 1 ? 'Primary INCOIS Observation' : `Alternative INCOIS Candidate #${rankNum}`}
+            </Text>
           </View>
         </View>
 
         {isAvailable && (
           <View style={styles.activePill}>
-            <Text style={styles.activePillText}>Active Zone</Text>
+            <Text style={styles.activePillText}>
+              {rankNum === 1 ? 'HOTSPOT' : `PFZ #${rankNum}`}
+            </Text>
           </View>
         )}
       </View>
@@ -37,7 +45,7 @@ export const PFZCard: React.FC<PFZCardProps> = ({ pfz, onViewOnMap }) => {
         <View style={styles.contentBody}>
           <View style={styles.metricRow}>
             <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>Nearest Zone</Text>
+              <Text style={styles.metricLabel}>Distance</Text>
               <Text style={styles.metricValue}>
                 {formatDistance(pfz.nearest?.distance_km)}
               </Text>
@@ -56,6 +64,21 @@ export const PFZCard: React.FC<PFZCardProps> = ({ pfz, onViewOnMap }) => {
               </View>
             </View>
           </View>
+
+          {/* Coordinates Bar */}
+          <View style={styles.coordsRow}>
+            <MapPin size={14} color={COLORS.oceanBlue} />
+            <Text style={styles.coordsText}>
+              Target: {formatCoordinates(pfz.nearest!.latitude, pfz.nearest!.longitude)}
+            </Text>
+          </View>
+
+          {/* Recommendation / Operational Note */}
+          {recReason && (
+            <View style={styles.reasonBox}>
+              <Text style={styles.reasonText}>{recReason}</Text>
+            </View>
+          )}
 
           {onViewOnMap && (
             <TouchableOpacity
@@ -166,6 +189,32 @@ const styles = StyleSheet.create({
     height: 36,
     backgroundColor: COLORS.divider,
     marginHorizontal: 12,
+  },
+  coordsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingHorizontal: 4,
+  },
+  coordsText: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  reasonBox: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: RADIUS.md,
+    padding: 10,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+  },
+  reasonText: {
+    ...TYPOGRAPHY.caption,
+    color: '#166534',
+    fontWeight: '500',
+    lineHeight: 18,
   },
   mapButton: {
     marginTop: SPACING.md,

@@ -15,8 +15,8 @@ export const DateSelector: React.FC<DateSelectorProps> = ({
 }) => {
   const [modalVisible, setModalVisible] = useState(false);
 
-  // Generate date choices for the next 7 days
-  const dateOptions = Array.from({ length: 7 }).map((_, index) => {
+  // Only today and tomorrow can be selected for a fishing trip.
+  const dateOptions = Array.from({ length: 2 }).map((_, index) => {
     const d = new Date();
     d.setDate(d.getDate() + index);
     const year = d.getFullYear();

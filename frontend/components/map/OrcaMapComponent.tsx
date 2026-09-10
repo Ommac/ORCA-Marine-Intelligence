@@ -1,13 +1,16 @@
 import React from 'react';
-import { OrcaResponse, PFZNearest } from '../../types/orca';
+import {
+  OrcaResponse,
+  PFZNearest,
+  ActiveMapLayers,
+  SelectedMapObject,
+} from '../../types/orca';
 
 export interface MapViewProps {
   response?: OrcaResponse | null;
-  activeLayers?: {
-    pfz: boolean;
-    myLocation: boolean;
-    distance: boolean;
-  };
+  activeLayers?: ActiveMapLayers;
+  selectedObject?: SelectedMapObject | null;
+  onSelectObject?: (obj: SelectedMapObject | null) => void;
   onSelectPFZ?: (nearest?: PFZNearest) => void;
   onViewDetails?: () => void;
 }
@@ -17,3 +20,4 @@ export interface MapViewProps {
  * Metro resolves platform extension files (.web.tsx or .native.tsx) at runtime.
  */
 export const OrcaMapComponent: React.FC<MapViewProps> = () => null;
+
