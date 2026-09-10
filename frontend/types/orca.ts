@@ -202,6 +202,7 @@ export interface RiskExplanation {
   risk_score: number;
   status: AssessmentStatus;
   dominant_hazard?: string | null;
+  primary_safety_concern?: string | null;
   primary_thing_to_watch?: string | null;
   primary_thing_to_watch_reason?: string | null;
   factors: RiskFactor[];

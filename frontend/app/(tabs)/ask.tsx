@@ -271,7 +271,7 @@ export default function AskOrcaScreen() {
 
                   {/* Visual "WHY?" Risk Explanation Card - Only when display.risk_explanation is explicitly true */}
                   {msg.display?.risk_explanation === true && msg.risk_explanation && (
-                    <RiskExplanationCard explanation={msg.risk_explanation} />
+                    <RiskExplanationCard explanation={msg.risk_explanation} showDecisionBanner={true} />
                   )}
 
                   {/* Top 3 or Single PFZ Recommendation Cards - Only when display.pfz is explicitly true */}

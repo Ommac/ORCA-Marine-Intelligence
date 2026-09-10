@@ -109,11 +109,22 @@ export function getStatusTheme(status: AssessmentStatus) {
         icon: 'alert-triangle',
         friendlyMessage: 'Fishing conditions require caution. Monitor changing weather.',
       };
+    case 'HIGH_RISK':
+      return {
+        label: 'HIGH RISK',
+        subtitle: 'HIGH RISK',
+        textColor: COLORS.dangerText,
+        bgColor: COLORS.dangerBg,
+        borderColor: COLORS.dangerBorder,
+        accentColor: COLORS.danger,
+        icon: 'alert-triangle',
+        friendlyMessage: 'Elevated marine risk detected. Extra vigilance required.',
+      };
     case 'NOT_RECOMMENDED':
     default:
       return {
         label: 'NOT RECOMMENDED',
-        subtitle: 'HIGH RISK',
+        subtitle: 'CRITICAL RISK',
         textColor: COLORS.dangerText,
         bgColor: COLORS.dangerBg,
         borderColor: COLORS.dangerBorder,

@@ -19,25 +19,45 @@ import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../constants/theme
 
 interface RiskExplanationCardProps {
   explanation?: RiskExplanation;
+  showDecisionBanner?: boolean;
 }
 
-export const RiskExplanationCard: React.FC<RiskExplanationCardProps> = ({ explanation }) => {
+export const RiskExplanationCard: React.FC<RiskExplanationCardProps> = ({
+  explanation,
+  showDecisionBanner = false,
+}) => {
   if (!explanation) {
     return null;
   }
 
   const {
-    decision,
     decision_label,
     decision_subtitle,
     risk_score,
+    status,
     dominant_hazard,
+    primary_safety_concern,
     primary_thing_to_watch,
     primary_thing_to_watch_reason,
     factors = [],
     action_guidance,
     vessel_evaluated,
   } = explanation;
+
+  // Single authoritative decision derived from backend status bands:
+  // 0–29: SAFE (GO), 30–59: CAUTION, 60–79: HIGH_RISK (DONT_GO), 80–100: NOT_RECOMMENDED (DONT_GO)
+  const authoritativeDecision: RiskDecision = React.useMemo(() => {
+    if (status === 'NOT_RECOMMENDED' || (risk_score !== undefined && risk_score >= 80)) {
+      return 'DONT_GO';
+    }
+    if (status === 'HIGH_RISK' || (risk_score !== undefined && risk_score >= 60)) {
+      return 'DONT_GO';
+    }
+    if (status === 'CAUTION' || (risk_score !== undefined && risk_score >= 30)) {
+      return 'CAUTION';
+    }
+    return 'GO';
+  }, [status, risk_score]);
 
   // Decision-based styling
   const getDecisionTheme = (dec: RiskDecision) => {
@@ -82,7 +102,7 @@ export const RiskExplanationCard: React.FC<RiskExplanationCardProps> = ({ explan
     }
   };
 
-  const theme = getDecisionTheme(decision);
+  const theme = getDecisionTheme(authoritativeDecision);
   const DecisionIcon = theme.Icon;
 
   // Factor helper
@@ -135,69 +155,96 @@ export const RiskExplanationCard: React.FC<RiskExplanationCardProps> = ({ explan
   };
 
   const hasUnavailableFactors = factors.some((f) => f.status === 'unavailable');
+  const dangerFactor = factors.find((f) => f.status === 'danger');
   const cautionFactor = factors.find((f) => f.status === 'caution');
+
+  const primaryConcernName =
+    primary_safety_concern ||
+    dominant_hazard ||
+    primary_thing_to_watch ||
+    dangerFactor?.name ||
+    cautionFactor?.name;
+
+  const primaryConcernReason =
+    primary_thing_to_watch_reason ||
+    (dangerFactor ? dangerFactor.interpretation || dangerFactor.reason : '') ||
+    (cautionFactor ? cautionFactor.interpretation || cautionFactor.reason : '');
 
   return (
     <View style={styles.container}>
-      {/* 1. TOP DECISION HERO BANNER (Single Authoritative Safety Decision) */}
-      <View style={[styles.decisionBanner, { backgroundColor: theme.bg, borderColor: theme.border }]}>
-        <View style={styles.decisionTopRow}>
-          <View style={[styles.iconContainer, { backgroundColor: theme.iconBg }]}>
-            <DecisionIcon size={24} color={theme.iconColor} />
-          </View>
-          <View style={styles.decisionTitles}>
-            <Text style={[styles.decisionLabel, { color: theme.text }]}>
-              {decision_label || theme.defaultLabel}
-            </Text>
-            {decision_subtitle && (
-              <Text style={[styles.decisionSubtitle, { color: theme.text }]}>
-                {decision_subtitle}
+      {/* 1. TOP DECISION HERO BANNER (Only rendered when showDecisionBanner is true, e.g. standalone in Chat) */}
+      {showDecisionBanner && (
+        <View style={[styles.decisionBanner, { backgroundColor: theme.bg, borderColor: theme.border }]}>
+          <View style={styles.decisionTopRow}>
+            <View style={[styles.iconContainer, { backgroundColor: theme.iconBg }]}>
+              <DecisionIcon size={24} color={theme.iconColor} />
+            </View>
+            <View style={styles.decisionTitles}>
+              <Text style={[styles.decisionLabel, { color: theme.text }]}>
+                {decision_label || theme.defaultLabel}
               </Text>
+              {decision_subtitle && (
+                <Text style={[styles.decisionSubtitle, { color: theme.text }]}>
+                  {decision_subtitle}
+                </Text>
+              )}
+            </View>
+          </View>
+
+          {/* Secondary Badges (Score & Vessel) */}
+          <View style={styles.badgeRow}>
+            {risk_score !== undefined && (
+              <View style={[styles.scoreBadge, { backgroundColor: theme.scoreBadgeBg }]}>
+                <Text style={[styles.scoreBadgeText, { color: theme.scoreTextColor }]}>
+                  Risk Index: {Math.round(risk_score)} / 100
+                </Text>
+              </View>
+            )}
+
+            {vessel_evaluated && (
+              <View style={styles.vesselBadge}>
+                <Anchor size={12} color={COLORS.primaryLight} style={{ marginRight: 4 }} />
+                <Text style={styles.vesselBadgeText}>{String(vessel_evaluated)}</Text>
+              </View>
             )}
           </View>
         </View>
+      )}
 
-        {/* Secondary Badges (Score & Vessel) */}
-        <View style={styles.badgeRow}>
-          {risk_score !== undefined && (
-            <View style={[styles.scoreBadge, { backgroundColor: theme.scoreBadgeBg }]}>
-              <Text style={[styles.scoreBadgeText, { color: theme.scoreTextColor }]}>
-                Risk Index: {Math.round(risk_score)} / 100
-              </Text>
-            </View>
-          )}
-
-          {vessel_evaluated && (
-            <View style={styles.vesselBadge}>
-              <Anchor size={12} color={COLORS.primaryLight} style={{ marginRight: 4 }} />
-              <Text style={styles.vesselBadgeText}>{String(vessel_evaluated)}</Text>
-            </View>
-          )}
-        </View>
-      </View>
-
-      {/* 2A. PRIMARY THING TO WATCH (When overall decision is GO and a secondary factor has caution) */}
-      {decision === 'GO' && (primary_thing_to_watch || cautionFactor) && (
+      {/* 2A. PRIMARY SAFETY CONCERN / WATCH BOX (When overall decision is GO and a factor is elevated) */}
+      {authoritativeDecision === 'GO' && primaryConcernName && (
         <View style={styles.primaryWatchBox}>
-          <AlertTriangle size={16} color={COLORS.caution} style={{ marginTop: 2, marginRight: 8 }} />
+          <AlertTriangle
+            size={16}
+            color={dangerFactor ? COLORS.danger : COLORS.caution}
+            style={{ marginTop: 2, marginRight: 8 }}
+          />
           <View style={{ flex: 1 }}>
-            <Text style={styles.primaryWatchLabel}>PRIMARY THING TO WATCH</Text>
+            <View style={styles.primaryConcernHeaderRow}>
+              <Text
+                style={[
+                  styles.primaryWatchLabel,
+                  dangerFactor && { color: COLORS.dangerText },
+                ]}
+              >
+                PRIMARY SAFETY CONCERN
+              </Text>
+              <View style={styles.individualConcernPill}>
+                <Text style={styles.individualConcernText}>Individual concern</Text>
+              </View>
+            </View>
             <Text style={styles.primaryWatchText}>
-              🟡 {primary_thing_to_watch || cautionFactor?.name}
-              {primary_thing_to_watch_reason
-                ? ` — ${primary_thing_to_watch_reason}`
-                : cautionFactor?.interpretation
-                ? ` — ${cautionFactor?.interpretation}`
-                : ''}
+              {primaryConcernName}
+              {primaryConcernReason ? ` — ${primaryConcernReason}` : ''}
             </Text>
           </View>
         </View>
       )}
 
       {/* 2B. DOMINANT HAZARD ALERT (When decision is CAUTION or DONT_GO) */}
-      {decision !== 'GO' && dominant_hazard && (
-        <View style={[styles.dominantHazardBox, decision === 'CAUTION' && styles.dominantHazardBoxCaution]}>
-          {decision === 'DONT_GO' ? (
+      {authoritativeDecision !== 'GO' && (dominant_hazard || primary_safety_concern || primaryConcernName) && (
+        <View style={[styles.dominantHazardBox, authoritativeDecision === 'CAUTION' && styles.dominantHazardBoxCaution]}>
+          {authoritativeDecision === 'DONT_GO' ? (
             <AlertOctagon size={16} color={COLORS.danger} style={{ marginTop: 2, marginRight: 8 }} />
           ) : (
             <AlertTriangle size={16} color={COLORS.caution} style={{ marginTop: 2, marginRight: 8 }} />
@@ -206,12 +253,14 @@ export const RiskExplanationCard: React.FC<RiskExplanationCardProps> = ({ explan
             <Text
               style={[
                 styles.dominantHazardLabel,
-                decision === 'CAUTION' && { color: COLORS.cautionText },
+                authoritativeDecision === 'CAUTION' && { color: COLORS.cautionText },
               ]}
             >
-              {decision === 'DONT_GO' ? 'PRIMARY SAFETY CONCERN' : 'PRIMARY HAZARD TO MONITOR'}
+              {authoritativeDecision === 'DONT_GO' ? 'PRIMARY SAFETY CONCERN' : 'PRIMARY HAZARD TO MONITOR'}
             </Text>
-            <Text style={styles.dominantHazardText}>{dominant_hazard}</Text>
+            <Text style={styles.dominantHazardText}>
+              {dominant_hazard || primary_safety_concern || primaryConcernName}
+            </Text>
           </View>
         </View>
       )}
@@ -223,10 +272,20 @@ export const RiskExplanationCard: React.FC<RiskExplanationCardProps> = ({ explan
           Key environmental factors evaluated against boat safety limits:
         </Text>
 
+        {/* Small Clarification Note: Distinction between overall decision and individual factors */}
+        <View style={styles.clarificationNoteBox}>
+          <Info size={13} color={COLORS.oceanBlue} style={{ marginTop: 2, marginRight: 6 }} />
+          <Text style={styles.clarificationNoteText}>
+            Note: Individual factors show their own severity ratings. The overall recommendation is the final combined assessment.
+          </Text>
+        </View>
+
         <View style={styles.factorsList}>
           {factors.map((factor, idx) => {
             const FactorIcon = getFactorIcon(factor.name);
             const statusBadge = getStatusBadge(factor.status);
+            const isElevatedUnderSafe =
+              authoritativeDecision === 'GO' && (factor.status === 'danger' || factor.status === 'caution');
 
             return (
               <View
@@ -238,7 +297,7 @@ export const RiskExplanationCard: React.FC<RiskExplanationCardProps> = ({ explan
                   factor.status === 'unavailable' && styles.factorCardUnavailable,
                 ]}
               >
-                {/* Header: Icon + Name + Formatted Value + Status */}
+                {/* Header: Icon + Name + Formatted Value + Status Badges */}
                 <View style={styles.factorHeaderRow}>
                   <View style={styles.factorNameGroup}>
                     <View style={styles.factorIconWrapper}>
@@ -246,20 +305,28 @@ export const RiskExplanationCard: React.FC<RiskExplanationCardProps> = ({ explan
                     </View>
                     <View>
                       <Text style={styles.factorName}>{factor.name}</Text>
-                      <Text style={styles.factorValue}>{factor.value_formatted}</Text>
+                      <Text style={styles.factorValue}>{factor.value_formatted || 'Unavailable'}</Text>
                     </View>
                   </View>
 
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      { backgroundColor: statusBadge.bg, borderColor: statusBadge.border },
-                    ]}
-                  >
-                    <View style={[styles.statusDot, { backgroundColor: statusBadge.dotColor }]} />
-                    <Text style={[styles.statusText, { color: statusBadge.text }]}>
-                      {statusBadge.label}
-                    </Text>
+                  <View style={styles.factorBadgesCol}>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        { backgroundColor: statusBadge.bg, borderColor: statusBadge.border },
+                      ]}
+                    >
+                      <View style={[styles.statusDot, { backgroundColor: statusBadge.dotColor }]} />
+                      <Text style={[styles.statusText, { color: statusBadge.text }]}>
+                        {statusBadge.label}
+                      </Text>
+                    </View>
+
+                    {isElevatedUnderSafe && (
+                      <View style={styles.factorIndividualBadge}>
+                        <Text style={styles.factorIndividualBadgeText}>Individual concern</Text>
+                      </View>
+                    )}
                   </View>
                 </View>
 
@@ -415,17 +482,56 @@ const styles = StyleSheet.create({
     padding: SPACING.sm,
     marginBottom: SPACING.md,
   },
+  primaryConcernHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
   primaryWatchLabel: {
     ...TYPOGRAPHY.caption,
     color: '#B45309',
     fontWeight: '800',
     letterSpacing: 0.5,
   },
+  individualConcernPill: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: RADIUS.xs,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  individualConcernText: {
+    ...TYPOGRAPHY.caption,
+    fontSize: 9.5,
+    color: '#92400E',
+    fontWeight: '700',
+  },
   primaryWatchText: {
     ...TYPOGRAPHY.bodySmall,
     color: COLORS.textPrimary,
     fontWeight: '600',
-    marginTop: 1,
+    marginTop: 2,
+  },
+  clarificationNoteBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: RADIUS.sm,
+    padding: 8,
+    marginBottom: SPACING.sm,
+  },
+  clarificationNoteText: {
+    ...TYPOGRAPHY.caption,
+    fontSize: 11.5,
+    color: '#0369A1',
+    fontWeight: '500',
+    lineHeight: 16,
+    flex: 1,
   },
   dominantHazardBox: {
     flexDirection: 'row',
@@ -520,6 +626,10 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     fontWeight: '600',
   },
+  factorBadgesCol: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -539,6 +649,20 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     fontWeight: '800',
     letterSpacing: 0.3,
+  },
+  factorIndividualBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: RADIUS.xs,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  factorIndividualBadgeText: {
+    ...TYPOGRAPHY.caption,
+    fontSize: 9,
+    color: '#92400E',
+    fontWeight: '700',
   },
   factorInterpretation: {
     ...TYPOGRAPHY.bodySmall,

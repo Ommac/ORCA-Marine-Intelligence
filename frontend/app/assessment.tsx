@@ -178,7 +178,7 @@ export default function AssessmentScreen() {
 
           {/* 6. Visual "WHY?" Risk Explanation Card or Fallback */}
           {data.risk_explanation ? (
-            <RiskExplanationCard explanation={data.risk_explanation} />
+            <RiskExplanationCard explanation={data.risk_explanation} showDecisionBanner={false} />
           ) : (
             <View style={styles.explanationCard}>
               <View style={styles.explanationHeader}>
