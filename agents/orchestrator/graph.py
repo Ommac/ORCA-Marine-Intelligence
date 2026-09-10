@@ -266,7 +266,7 @@ def classify_query(query: str) -> Tuple[str, List[str], bool]:
         "pfz", "potential fishing zone", "potential fishing zones",
         "fishing zone", "fishing zones", "fish zone", "best fishing area",
         "nearest fishing zone", "nearest pfz", "nearby fishing zone",
-        "find a fishing zone", "find nearest pfz", "nearest potential fishing zone",
+        "find a fishing zone", "find nearest pfz", "fishes", "nearest potential fishing zone",
     ]
     weather_keywords = [
         "marine weather", "weather", "wave", "waves", "wave height",

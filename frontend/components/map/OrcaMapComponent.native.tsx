@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+// @ts-ignore
 import MapView, { Callout, Circle, Marker, Polygon, Polyline, Region } from 'react-native-maps';
+
 import { Minus, Navigation, Plus } from 'lucide-react-native';
 import { OrcaResponse, PFZNearest } from '../../types/orca';
 import { NormalizedPFZFeature, PFZLatLng, calculatePFZBounds, normalizePFZFeatures } from '../../utils/pfzGeometry';
@@ -101,8 +103,9 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({ response, activeLayer
     {!mapReady && <View style={styles.loadingOverlay}><Text style={styles.loadingText}>Loading map...</Text></View>}
     {mapReady && !features.length && <View style={styles.emptyOverlay}><Text style={styles.emptyText}>{response.pfz.message ? 'Unable to load PFZ data' : hasLivePFZ ? 'No PFZ data available' : 'Loading PFZ data...'}</Text></View>}
     <View style={styles.controlsCol}>
-      <TouchableOpacity style={styles.controlBtn} onPress={() => mapRef.current?.getCamera().then((camera) => mapRef.current?.animateCamera({ ...camera, zoom: (camera.zoom || 9) + 1 }))} accessibilityLabel="Zoom In"><Plus size={20} color={COLORS.textPrimary} /></TouchableOpacity>
-      <TouchableOpacity style={styles.controlBtn} onPress={() => mapRef.current?.getCamera().then((camera) => mapRef.current?.animateCamera({ ...camera, zoom: Math.max((camera.zoom || 9) - 1, 1) }))} accessibilityLabel="Zoom Out"><Minus size={20} color={COLORS.textPrimary} /></TouchableOpacity>
+      <TouchableOpacity style={styles.controlBtn} onPress={() => mapRef.current?.getCamera().then((camera: any) => mapRef.current?.animateCamera({ ...camera, zoom: (camera.zoom || 9) + 1 }))} accessibilityLabel="Zoom In"><Plus size={20} color={COLORS.textPrimary} /></TouchableOpacity>
+      <TouchableOpacity style={styles.controlBtn} onPress={() => mapRef.current?.getCamera().then((camera: any) => mapRef.current?.animateCamera({ ...camera, zoom: Math.max((camera.zoom || 9) - 1, 1) }))} accessibilityLabel="Zoom Out"><Minus size={20} color={COLORS.textPrimary} /></TouchableOpacity>
+
       <TouchableOpacity style={styles.controlBtn} onPress={recenter} accessibilityLabel="Recenter Map"><Navigation size={18} color={COLORS.oceanBlue} /></TouchableOpacity>
     </View>
   </View>;

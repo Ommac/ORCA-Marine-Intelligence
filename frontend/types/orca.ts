@@ -7,6 +7,44 @@ export type AssessmentStatus = "SAFE" | "CAUTION" | "HIGH_RISK" | "NOT_RECOMMEND
 export type SeverityLevel = "CRITICAL" | "HIGH" | "MODERATE" | "MEDIUM" | "LOW" | "INFO" | "NONE";
 export type SVASSeverity = "alert" | "safe" | "warning" | "advisory";
 
+export interface PFZCandidate {
+  id: string;
+  rank: number;
+  label: string;
+  name?: string;
+  distance_km: number;
+  bearing_degrees?: number;
+  direction?: string;
+  coordinates: {
+    latitude: number;
+    longitude: number;
+  };
+  nearest_point?: PFZNearest;
+  geometry?: any;
+  category?: string;
+  uid?: string | number;
+  sno?: string | number;
+  data_year?: number;
+  julian_day?: number;
+  valid_until?: string | null;
+  recommended: boolean;
+  recommendation_reason?: string;
+}
+
+export interface UIAction {
+  type: "show_on_map" | "navigate_tab" | "highlight_hazard" | string;
+  target?: string;
+  rank?: number;
+  coordinates?: {
+    latitude: number;
+    longitude: number;
+  };
+  label?: string;
+  zoom?: number;
+  geometry?: any;
+  top_candidates?: PFZCandidate[];
+}
+
 export interface OrcaRequest {
   query?: string;
   latitude: number;
@@ -14,6 +52,12 @@ export interface OrcaRequest {
   date: string; // YYYY-MM-DD
   boat_width_m: number;
   request_id?: string;
+  session_id?: string;
+  conversation_history?: Array<{ role: string; content: string }>;
+  language?: string;
+  audio_base64?: string;
+  audio_format?: string;
+  enable_tts?: boolean;
 }
 
 export interface Assessment {
@@ -41,6 +85,9 @@ export interface PFZData {
   geometry?: PFZGeometry;
   metadata?: Record<string, unknown>;
   message?: string;
+  top_candidates?: PFZCandidate[];
+  selected_rank?: number;
+  total_candidates?: number;
 }
 
 export interface MarineData {
@@ -81,12 +128,39 @@ export interface Hazard {
 
 export type AlertType = "weather" | "ocean" | "vessel" | "geofence" | "risk";
 export type AlertSeverity = "critical" | "high" | "moderate" | "low" | "info";
+export type AlertSeverityLevel = "CRITICAL" | "HIGH" | "CAUTION" | "INFORMATION" | "SAFE" | "MODERATE" | "MEDIUM" | "LOW" | "INFO" | "NONE";
+export type AlertStatus = "active" | "forecast" | "informational" | "safe" | "unavailable" | "ACTIVE" | "RESOLVED" | "DISMISSED";
+export type AlertCategory = "boat_safety" | "ocean_hazard" | "weather" | "forecast" | "pfz_safety" | "svas" | "general" | "WEATHER" | "VESSEL" | "OCEAN" | "GEOFENCE" | "RISK" | string;
+
+export interface AlertEvidence {
+  label: string;
+  value: string | number;
+  unit?: string;
+}
+
+export interface OrcaAlert {
+  id: string;
+  type: string;
+  severity: AlertSeverityLevel;
+  priority: number;
+  title: string;
+  subtitle?: string;
+  evidence?: AlertEvidence[];
+  advice: string;
+  source?: string;
+  status: AlertStatus | string;
+  category: AlertCategory | string;
+  icon?: string;
+  distance?: string;
+  direction?: string;
+  updatedAt?: string;
+}
 
 export interface Alert {
   id: string;
   request_id?: string;
-  type: AlertType;
-  severity: AlertSeverity;
+  type: AlertType | string;
+  severity: AlertSeverity | SeverityLevel;
   title: string;
   message: string;
   source: string;
@@ -101,6 +175,58 @@ export interface Meta {
   request_id?: string;
 }
 
+export type RiskDecision = 'GO' | 'CAUTION' | 'DONT_GO';
+
+export interface RiskFactor {
+  id: string;
+  name: string;
+  value?: number | string | null;
+  unit?: string;
+  value_formatted: string;
+  status: 'safe' | 'caution' | 'danger' | 'unavailable';
+  status_label: string;
+  impact: 'low' | 'moderate' | 'high' | 'critical' | 'unknown';
+  reason: string;
+  interpretation?: string;
+  threshold_context?: string;
+  icon?: string;
+  is_critical?: boolean;
+}
+
+export interface ActionGuidance {
+  headline: string;
+  action_text: string;
+  urgency: 'normal' | 'caution' | 'immediate' | 'critical' | 'moderate' | 'routine';
+}
+
+export interface RiskExplanation {
+  decision: RiskDecision;
+  decision_label: string;
+  decision_subtitle: string;
+  risk_score: number;
+  status: AssessmentStatus;
+  dominant_hazard?: string | null;
+  primary_thing_to_watch?: string | null;
+  primary_thing_to_watch_reason?: string | null;
+  factors: RiskFactor[];
+  action_guidance: ActionGuidance;
+  vessel_evaluated?: string | boolean;
+  boat_width_m?: number;
+  data_quality?: string;
+  missing_factors?: string[];
+}
+
+export interface DisplayFlags {
+  pfz: boolean;
+  pfz_mode?: 'pfz_list' | 'single_pfz' | 'none';
+  risk_explanation?: boolean;
+  marine?: boolean;
+  svas?: boolean;
+  ocean_hazards?: boolean;
+  risk_assessment?: boolean;
+  map_action?: boolean;
+}
+
 export interface OrcaResponse {
   request_id?: string;
   request?: OrcaRequest;
@@ -112,6 +238,18 @@ export interface OrcaResponse {
   alerts: Alert[];
   meta: Meta;
   recommendation?: string;
+  ui_action?: UIAction;
+  display?: DisplayFlags;
+  risk_explanation?: RiskExplanation;
+  top_pfz?: PFZCandidate[];
+  lightning?: any;
+  language?: string;
+  language_name?: string;
+  original_query?: string;
+  translated_query?: string;
+  original_recommendation?: string;
+  audio_base64?: string | null;
+  audio_format?: string;
 }
 
 export interface PresetLocation {

@@ -5,7 +5,7 @@
  * Consumes and returns strictly normalized OrcaResponse objects from the live ORCA backend.
  */
 
-import { OrcaRequest, OrcaResponse, AssessmentStatus, SeverityLevel, Hazard, Alert } from '../types/orca';
+import { OrcaRequest, OrcaResponse, AssessmentStatus, SeverityLevel, Hazard, Alert, PFZCandidate, UIAction } from '../types/orca';
 import { getMockResponseForRequest, MOCK_PALGHAR_RESPONSE } from '../mocks/orcaResponse';
 import { getActiveTrip, getTodayDateISO, setActiveLocation, setActiveDate, setActiveBoatWidth } from './tripStore';
 
@@ -96,6 +96,7 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
     julian_day: pfzDetails.julian_day,
     valid_until: pfzDetails.valid_until,
   };
+  const topCandidates: PFZCandidate[] = raw?.top_pfz || pfzRaw?.top_candidates || pfzDetails?.top_candidates || raw?.ui_action?.top_candidates || [];
 
   // Marine Weather Mapping
   const marineWeatherRaw = raw?.marine_weather || {};
@@ -154,6 +155,8 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
       boat_width_m: raw?.boat_width_m ?? raw?.input?.boat_width_m ?? activeTrip.boatWidthM ?? 5.0,
       query: raw?.query ?? raw?.input?.query,
       request_id: requestId,
+      session_id: raw?.session_id,
+      language: raw?.language,
     },
     assessment: {
       status: riskStatus,
@@ -165,8 +168,22 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
       nearest: pfzNearest,
       geometry: pfzDetails.geometry,
       metadata: pfzMetadata,
+      top_candidates: topCandidates.length > 0 ? topCandidates : undefined,
+      selected_rank: pfzRaw?.selected_rank,
+      total_candidates: pfzRaw?.total_candidates,
       message: pfzRaw.error || pfzRaw.reason || (isPfzAvailable ? undefined : 'PFZ data feed is currently unavailable.'),
     },
+    top_pfz: topCandidates.length > 0 ? topCandidates : undefined,
+    display: raw?.display ? {
+      pfz: Boolean(raw?.display?.pfz),
+      pfz_mode: raw?.display?.pfz_mode || (raw?.display?.pfz ? (topCandidates.length === 1 ? 'single_pfz' : 'pfz_list') : 'none'),
+      risk_explanation: Boolean(raw?.display?.risk_explanation),
+      marine: Boolean(raw?.display?.marine ?? (raw?.marine_weather?.status === 'success')),
+      svas: Boolean(raw?.display?.svas ?? (raw?.svas?.status === 'success')),
+      ocean_hazards: Boolean(raw?.display?.ocean_hazards ?? (raw?.ocean_analysis?.status === 'success')),
+      risk_assessment: Boolean(raw?.display?.risk_assessment ?? (raw?.risk_required || raw?.risk?.status)),
+      map_action: Boolean(raw?.display?.map_action ?? (raw?.ui_action != null)),
+    } : undefined,
     marine: {
       available: isMarineAvailable,
       temperature_c: weatherData.temperature_c,
@@ -197,6 +214,24 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
       request_id: requestId,
     },
     recommendation: raw?.recommendation,
+    risk_explanation: raw?.risk_explanation || raw?.risk?.explanation_card || undefined,
+    language: raw?.language || req?.language,
+    language_name: raw?.language_name,
+    original_query: raw?.original_query || req?.query,
+    translated_query: raw?.translated_query,
+    original_recommendation: raw?.original_recommendation,
+    audio_base64: raw?.audio_base64,
+    audio_format: raw?.audio_format || 'wav',
+    ui_action: raw?.ui_action ? {
+      type: raw.ui_action.type || 'show_on_map',
+      target: raw.ui_action.target,
+      rank: raw.ui_action.rank,
+      coordinates: raw.ui_action.coordinates,
+      label: raw.ui_action.label,
+      zoom: raw.ui_action.zoom,
+      geometry: raw.ui_action.geometry,
+      top_candidates: raw.ui_action.top_candidates || (topCandidates.length > 0 ? topCandidates : undefined),
+    } : undefined,
   };
 }
 
@@ -213,6 +248,8 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
     date: request.date ?? activeTrip.date ?? getTodayDateISO(),
     boat_width_m: request.boat_width_m ?? activeTrip.boatWidthM ?? 5.0,
     request_id: request.request_id || `req-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+    session_id: request.session_id,
+    language: request.language,
   };
 
   if (USE_MOCK_API) {
@@ -240,6 +277,8 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
         date: effectiveRequest.date,
         boat_width_m: effectiveRequest.boat_width_m,
         request_id: effectiveRequest.request_id,
+        session_id: effectiveRequest.session_id,
+        language: effectiveRequest.language,
       }),
     });
 
@@ -263,19 +302,60 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
   }
 }
 
+// Persistent chat session identifier
+let persistentChatSessionId: string = `sess-chat-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+
+export function getChatSessionId(): string {
+  return persistentChatSessionId;
+}
+
+export function resetChatSessionId(): string {
+  persistentChatSessionId = `sess-chat-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+  return persistentChatSessionId;
+}
+
 /**
  * Natural language chat query method for the "Ask ORCA" screen.
  * Calls POST /api/orca/assess using the active trip context.
  */
+export interface QueryOrcaResult {
+  text: string;
+  assessment?: OrcaResponse;
+  rawBackendResponse?: any;
+  requestId?: string;
+  uiAction?: any;
+  audioBase64?: string | null;
+  audioFormat?: string;
+  language?: string;
+  originalRecommendation?: string;
+}
+
+export const SUPPORTED_LANGUAGES = [
+  { code: 'en', name: 'English', native: 'English' },
+  { code: 'mr', name: 'Marathi', native: 'मराठी' },
+  { code: 'hi', name: 'Hindi', native: 'हिन्दी' },
+  { code: 'ta', name: 'Tamil', native: 'தமிழ்' },
+  { code: 'te', name: 'Telugu', native: 'తెలుగు' },
+  { code: 'gu', name: 'Gujarati', native: 'ગુજરાતી' },
+  { code: 'bn', name: 'Bengali', native: 'বাংলা' },
+];
+
+/**
+ * Natural language chat query method for the "Ask ORCA" screen.
+ * Calls POST /api/orca/assess using the active trip context and conversational session.
+ * Supports Bhashini multilingual translation, speech-to-text, and voice synthesis.
+ */
 export async function queryOrcaAssistant(
   queryText: string,
   context?: Partial<OrcaRequest>
-): Promise<{ text: string; assessment?: OrcaResponse; rawBackendResponse?: any; requestId?: string }> {
+): Promise<QueryOrcaResult> {
   const activeTrip = getActiveTrip();
   const targetLatitude = context?.latitude ?? activeTrip.location.latitude;
   const targetLongitude = context?.longitude ?? activeTrip.location.longitude;
   const targetDate = context?.date ?? activeTrip.date ?? getTodayDateISO();
   const targetBoatWidth = context?.boat_width_m ?? activeTrip.boatWidthM ?? 5.0;
+  const sessionId = context?.session_id || persistentChatSessionId;
+  const language = context?.language || 'auto';
 
   if (USE_MOCK_API) {
     await new Promise((resolve) => setTimeout(resolve, 900));
@@ -287,29 +367,30 @@ export async function queryOrcaAssistant(
     const wind = current.marine.wind_speed_knots;
 
     const lower = queryText.toLowerCase();
+    let text = `Based on your selected location (${activeTrip.location.name}) and boat size, overall conditions are rated ${status} (Risk score: ${current.assessment.risk_score}/100). Nearest fishing zone is ${pfzDist ?? 39.0} km away. Stay safe and monitor alerts!`;
 
     if (lower.includes('can i go') || lower.includes('safe') || lower.includes('tomorrow')) {
       if (status === 'SAFE') {
-        return {
-          text: `Yes, it looks SAFE to go fishing tomorrow! Waves are around ${waves ?? 1.2} m with calm winds of ${wind ?? 8} knots. Your nearest fishing zone is ${pfzDist ?? 25} km away (${pfzDir ?? 'W'}).`,
-          assessment: current,
-        };
+        text = `Yes, it looks SAFE to go fishing tomorrow! Waves are around ${waves ?? 1.2} m with calm winds of ${wind ?? 8} knots. Your nearest fishing zone is ${pfzDist ?? 25} km away (${pfzDir ?? 'W'}).`;
       } else if (status === 'CAUTION') {
-        return {
-          text: `Fishing requires CAUTION tomorrow. ${current.svas.message || 'Stronger wind gusts expected.'} If your vessel is under 6m, consider staying closer to shore or waiting for calmer water.`,
-          assessment: current,
-        };
+        text = `Fishing requires CAUTION tomorrow. ${current.svas.message || 'Stronger wind gusts expected.'} If your vessel is under 6m, consider staying closer to shore or waiting for calmer water.`;
       } else {
-        return {
-          text: `Sailing is NOT RECOMMENDED tomorrow due to rough sea conditions and active weather warnings. Please prioritize safety and stay in port.`,
-          assessment: current,
-        };
+        text = `Sailing is NOT RECOMMENDED tomorrow due to rough sea conditions and active weather warnings. Please prioritize safety and stay in port.`;
       }
     }
 
+    if (language === 'mr') {
+      text = `[मराठी] ${text}`;
+    } else if (language === 'hi') {
+      text = `[हिन्दी] ${text}`;
+    }
+
     return {
-      text: `Based on your selected location (${activeTrip.location.name}) and boat size, overall conditions are rated ${status} (Risk score: ${current.assessment.risk_score}/100). Nearest fishing zone is ${pfzDist ?? 39.0} km away. Stay safe and monitor alerts!`,
+      text,
       assessment: current,
+      language,
+      audioBase64: 'UklGRi4AAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=',
+      audioFormat: 'wav',
     };
   }
 
@@ -322,6 +403,12 @@ export async function queryOrcaAssistant(
     date: targetDate,
     boat_width_m: targetBoatWidth,
     request_id: clientRequestId,
+    session_id: sessionId,
+    conversation_history: context?.conversation_history,
+    language: context?.language,
+    audio_base64: context?.audio_base64,
+    audio_format: context?.audio_format || 'wav',
+    enable_tts: context?.enable_tts ?? true,
   };
 
   latestRequestId = clientRequestId;
@@ -334,7 +421,20 @@ export async function queryOrcaAssistant(
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
-      body: JSON.stringify(reqBody),
+      body: JSON.stringify({
+        query: reqBody.query,
+        latitude: reqBody.latitude,
+        longitude: reqBody.longitude,
+        date: reqBody.date,
+        boat_width_m: reqBody.boat_width_m,
+        request_id: reqBody.request_id,
+        session_id: reqBody.session_id,
+        conversation_history: reqBody.conversation_history,
+        language: reqBody.language,
+        audio_base64: reqBody.audio_base64,
+        audio_format: reqBody.audio_format,
+        enable_tts: reqBody.enable_tts,
+      }),
     });
 
     if (!response.ok) {
@@ -344,6 +444,10 @@ export async function queryOrcaAssistant(
 
     const data = await response.json();
     const normalized = normalizeBackendResponse(data, reqBody);
+
+    console.log(`[ORCA CHAT QUERY DATA] Request ID: ${data.request_id || clientRequestId}`);
+    console.log(`[ORCA CHAT QUERY DATA] Status: ${normalized.assessment.status}, Intent: ${data.intent}, Lang: ${data.language}`);
+
     notifyAssessmentListeners(normalized);
 
     const answerText = data.recommendation || normalized.assessment.summary || 'Assessment received from ORCA.';
@@ -353,10 +457,14 @@ export async function queryOrcaAssistant(
       assessment: normalized,
       rawBackendResponse: data,
       requestId: data.request_id || clientRequestId,
+      uiAction: normalized.ui_action,
+      audioBase64: data.audio_base64,
+      audioFormat: data.audio_format || 'wav',
+      language: data.language,
+      originalRecommendation: data.original_recommendation,
     };
   } catch (error: any) {
     console.error('queryOrcaAssistant live backend error:', error);
     throw error;
   }
 }
-
