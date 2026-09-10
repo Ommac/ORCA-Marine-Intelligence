@@ -216,6 +216,9 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
     },
     recommendation: raw?.recommendation,
     risk_explanation: raw?.risk_explanation || raw?.risk?.explanation_card || undefined,
+    language: raw?.language,
+    original_recommendation: raw?.original_recommendation,
+    audio_base64: raw?.audio_base64,
     ui_action: raw?.ui_action ? {
       type: raw.ui_action.type || 'show_on_map',
       target: raw.ui_action.target,
@@ -243,6 +246,8 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
     boat_width_m: request.boat_width_m ?? activeTrip.boatWidthM ?? 5.0,
     request_id: request.request_id || `req-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
     session_id: request.session_id,
+    language: request.language,
+    generate_audio: request.generate_audio,
   };
 
   if (USE_MOCK_API) {
@@ -271,6 +276,8 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
         boat_width_m: effectiveRequest.boat_width_m,
         request_id: effectiveRequest.request_id,
         session_id: effectiveRequest.session_id,
+        language: effectiveRequest.language,
+        generate_audio: effectiveRequest.generate_audio,
       }),
     });
 
@@ -313,13 +320,15 @@ export function resetChatSessionId(): string {
 export async function queryOrcaAssistant(
   queryText: string,
   context?: Partial<OrcaRequest>
-): Promise<{ text: string; assessment?: OrcaResponse; rawBackendResponse?: any; requestId?: string; uiAction?: any }> {
+): Promise<{ text: string; assessment?: OrcaResponse; rawBackendResponse?: any; requestId?: string; uiAction?: any; audioBase64?: string }> {
   const activeTrip = getActiveTrip();
   const targetLatitude = context?.latitude ?? activeTrip.location.latitude;
   const targetLongitude = context?.longitude ?? activeTrip.location.longitude;
   const targetDate = context?.date ?? activeTrip.date ?? getTodayDateISO();
   const targetBoatWidth = context?.boat_width_m ?? activeTrip.boatWidthM ?? 5.0;
   const sessionId = context?.session_id || persistentChatSessionId;
+  const preferredLang = context?.language || 'en';
+  const shouldGenAudio = context?.generate_audio ?? false;
 
   if (USE_MOCK_API) {
     await new Promise((resolve) => setTimeout(resolve, 900));
@@ -368,6 +377,8 @@ export async function queryOrcaAssistant(
     request_id: clientRequestId,
     session_id: sessionId,
     conversation_history: context?.conversation_history,
+    language: preferredLang,
+    generate_audio: shouldGenAudio,
   };
 
   latestRequestId = clientRequestId;
@@ -389,6 +400,8 @@ export async function queryOrcaAssistant(
         request_id: reqBody.request_id,
         session_id: reqBody.session_id,
         conversation_history: reqBody.conversation_history,
+        language: reqBody.language,
+        generate_audio: reqBody.generate_audio,
       }),
     });
 
@@ -408,10 +421,91 @@ export async function queryOrcaAssistant(
       rawBackendResponse: data,
       requestId: data.request_id || clientRequestId,
       uiAction: normalized.ui_action,
+      audioBase64: data.audio_base64 || normalized.audio_base64,
     };
   } catch (error: any) {
     console.error('queryOrcaAssistant live backend error:', error);
     throw error;
   }
 }
+
+// -----------------------------------------------------------------------------
+// Bhashini Multilingual & Voice Dedicated API Helpers
+// -----------------------------------------------------------------------------
+
+export async function detectLanguage(text: string): Promise<{ language: string; confidence: number; language_name: string }> {
+  try {
+    const res = await fetch(`${getBaseUrl()}/api/language/detect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.warn('detectLanguage failed, defaulting to en:', err);
+    return { language: 'en', confidence: 1.0, language_name: 'English' };
+  }
+}
+
+export async function translateText(text: string, sourceLang: string, targetLang: string): Promise<string> {
+  if (!text || sourceLang === targetLang) return text;
+  try {
+    const res = await fetch(`${getBaseUrl()}/api/language/translate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        source_language: sourceLang,
+        target_language: targetLang,
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return data.translated_text || text;
+  } catch (err) {
+    console.warn('translateText failed, returning original:', err);
+    return text;
+  }
+}
+
+export async function transcribeAudio(audioBase64: string, language: string = 'mr'): Promise<{ transcript: string; language: string }> {
+  const res = await fetch(`${getBaseUrl()}/api/language/speech-to-text`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      audio_base64: audioBase64,
+      language,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Speech-to-text error (${res.status}): ${text}`);
+  }
+  const data = await res.json();
+  return {
+    transcript: data.transcript,
+    language: data.language || language,
+  };
+}
+
+export async function synthesizeSpeech(text: string, language: string = 'mr'): Promise<string | null> {
+  try {
+    const res = await fetch(`${getBaseUrl()}/api/language/text-to-speech`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        language,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.audio_base64 || null;
+  } catch (err) {
+    console.warn('synthesizeSpeech failed:', err);
+    return null;
+  }
+}
+
 

@@ -45,6 +45,14 @@ export interface UIAction {
   top_candidates?: PFZCandidate[];
 }
 
+export type SupportedLanguage = 'en' | 'mr' | 'hi' | 'ta' | 'te' | 'gu' | 'kn' | 'ml' | 'bn' | 'or';
+
+export interface LanguageOption {
+  code: SupportedLanguage;
+  label: string;
+  nativeLabel: string;
+}
+
 export interface OrcaRequest {
   query?: string;
   latitude: number;
@@ -54,6 +62,8 @@ export interface OrcaRequest {
   request_id?: string;
   session_id?: string;
   conversation_history?: Array<{ role: string; content: string }>;
+  language?: SupportedLanguage | string;
+  generate_audio?: boolean;
 }
 
 export interface Assessment {
@@ -211,7 +221,15 @@ export interface OrcaResponse {
   display?: DisplayFlags;
   risk_explanation?: RiskExplanation;
   top_pfz?: PFZCandidate[];
+<<<<<<< Updated upstream
+=======
+  lightning?: any;
+  language?: string;
+  original_recommendation?: string;
+  audio_base64?: string;
+>>>>>>> Stashed changes
 }
+
 
 export interface PresetLocation {
   id: string;

@@ -1,4 +1,54 @@
-.env
+# Python
 __pycache__/
+<<<<<<< Updated upstream
 *.pyc
 .DS_Store.venv/
+=======
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment Variables & Secrets (CRITICAL: NEVER COMMIT KEYS)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Node / Expo / Frontend
+node_modules/
+.expo/
+dist/
+web-build/
+*.tsbuildinfo
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+>>>>>>> Stashed changes
