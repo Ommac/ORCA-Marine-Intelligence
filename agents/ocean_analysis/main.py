@@ -28,6 +28,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from concurrent.futures import ThreadPoolExecutor
+
 from .sources import (
     fetch_chlorophyll_data,
     fetch_cyclone_data,
@@ -186,11 +188,23 @@ def analyze_ocean_conditions(
     date_val = requested_date.strip()
     query_ts = get_current_iso_timestamp()
 
-    # 2. Fetch from all 4 modular sources with independent resilience
-    chlorophyll_res = fetch_chlorophyll_data(lat_val, lon_val, date_val)
-    cyclone_res = fetch_cyclone_data(lat_val, lon_val, date_val)
-    lightning_res = fetch_lightning_data(lat_val, lon_val, date_val)
-    tsunami_res = fetch_tsunami_data(lat_val, lon_val, radius_km=2000.0)
+    # 2. Fetch from all 4 modular sources concurrently with independent resilience
+    try:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            fut_chloro = executor.submit(fetch_chlorophyll_data, lat_val, lon_val, date_val)
+            fut_cyclone = executor.submit(fetch_cyclone_data, lat_val, lon_val, date_val)
+            fut_lightning = executor.submit(fetch_lightning_data, lat_val, lon_val, date_val)
+            fut_tsunami = executor.submit(fetch_tsunami_data, lat_val, lon_val, 2000.0)
+
+            chlorophyll_res = fut_chloro.result()
+            cyclone_res = fut_cyclone.result()
+            lightning_res = fut_lightning.result()
+            tsunami_res = fut_tsunami.result()
+    except Exception as exc:
+        chlorophyll_res = {"available": False, "source": "mosdac_chlorophyll", "reason": str(exc)}
+        cyclone_res = {"available": False, "source": "incois_cyclone", "reason": str(exc)}
+        lightning_res = {"available": False, "source": "mosdac_insat3d_lightning", "reason": str(exc)}
+        tsunami_res = {"available": False, "source": "incois_itewc_tsunami", "reason": str(exc)}
 
     # 3. Assess source statuses
     source_status_map = {

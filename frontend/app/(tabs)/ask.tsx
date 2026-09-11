@@ -31,7 +31,7 @@ import {
 import { OrcaHeader } from '../../components/OrcaHeader';
 import { PFZTopCards } from '../../components/PFZTopCards';
 import { RiskExplanationCard } from '../../components/RiskExplanationCard';
-import { queryOrcaAssistant, synthesizeSpeech } from '../../services/api';
+import { queryOrcaAssistant, synthesizeSpeech, setSelectedPFZId } from '../../services/api';
 import { getActiveTrip, subscribeToTrip } from '../../services/tripStore';
 import { setMapFocus } from '../../services/mapFocusStore';
 import { formatDateToFisherman } from '../../utils/formatting';
@@ -538,7 +538,7 @@ export default function AskOrcaScreen() {
 
                   {/* Visual "WHY?" Risk Explanation Card */}
                   {msg.display?.risk_explanation === true && msg.risk_explanation && (
-                    <RiskExplanationCard explanation={msg.risk_explanation} />
+                    <RiskExplanationCard explanation={msg.risk_explanation} language={msg.language || selectedLang} />
                   )}
 
                   {/* Top 3 or Single PFZ Recommendation Cards */}
@@ -546,7 +546,8 @@ export default function AskOrcaScreen() {
                     <PFZTopCards
                       candidates={msg.top_candidates}
                       selectedRank={msg.ui_action?.rank || (msg.top_candidates.length === 1 ? msg.top_candidates[0].rank : 1)}
-                      onSelect={(cand) =>
+                      onSelect={(cand) => {
+                        setSelectedPFZId(cand.id);
                         handleMapAction({
                           type: 'show_on_map',
                           target: 'pfz',
@@ -556,8 +557,18 @@ export default function AskOrcaScreen() {
                           geometry: cand.geometry,
                           zoom: 11,
                           top_candidates: msg.top_candidates,
-                        })
-                      }
+                        });
+                      }}
+                      onViewAssessment={(cand) => {
+                        setSelectedPFZId(cand.id);
+                        router.push({
+                          pathname: '/assessment',
+                          params: {
+                            pfzId: cand.id,
+                            rank: String(cand.rank),
+                          },
+                        });
+                      }}
                     />
                   )}
 

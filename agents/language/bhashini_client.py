@@ -172,28 +172,28 @@ class BhashiniClient:
     # -------------------------------------------------------------------------
     # Text Translation
     # -------------------------------------------------------------------------
-    def translate_text(
+    def translate_texts(
         self,
-        text: str,
+        texts: List[str],
         source_lang: str,
         target_lang: str = "en",
-    ) -> str:
+    ) -> List[str]:
         """
-        Translates text between Indian languages and English using Bhashini Translation API.
-        Falls back to original text if translation fails or service is unavailable.
+        Translates a list of texts between Indian languages and English in a single batch.
+        Falls back to original texts if translation fails or service is unavailable.
         """
-        if not text or not text.strip():
-            return ""
+        if not texts:
+            return []
 
         s_lang = (source_lang or "en").lower().strip()
         t_lang = (target_lang or "en").lower().strip()
 
-        if s_lang == t_lang:
-            return text
+        if s_lang == t_lang or not self.inference_key:
+            return list(texts)
 
-        if not self.inference_key:
-            logger.debug("[BHASHINI] No BHASHINI_INFERENCE_KEY configured. Returning original text.")
-            return text
+        indexed_items = [(idx, t) for idx, t in enumerate(texts) if t and isinstance(t, str) and t.strip()]
+        if not indexed_items:
+            return list(texts)
 
         service_id, callback_url = self.discover_pipeline("translation", s_lang, t_lang)
 
@@ -211,7 +211,7 @@ class BhashiniClient:
 
         payload = {
             "pipelineTasks": [payload_task],
-            "inputData": {"input": [{"source": text}]},
+            "inputData": {"input": [{"source": t} for _, t in indexed_items]},
         }
 
         headers = {
@@ -220,6 +220,7 @@ class BhashiniClient:
             "Accept": "application/json",
         }
 
+        results = list(texts)
         try:
             resp = requests.post(callback_url, json=payload, headers=headers, timeout=self.timeout)
 
@@ -228,29 +229,45 @@ class BhashiniClient:
                 pipeline_res = data.get("pipelineResponse", [])
                 if pipeline_res and "output" in pipeline_res[0]:
                     out_list = pipeline_res[0]["output"]
-                    if out_list and "target" in out_list[0]:
-                        translated = out_list[0]["target"].strip()
-                        if translated:
-                            logger.info(
-                                "[BHASHINI TRANSLATION] '%s' (%s) -> '%s' (%s)",
-                                text[:40],
-                                s_lang,
-                                translated[:40],
-                                t_lang,
-                            )
-                            return translated
+                    for (orig_idx, orig_text), out_item in zip(indexed_items, out_list):
+                        tgt = out_item.get("target", "").strip()
+                        if tgt:
+                            results[orig_idx] = tgt
+                    logger.info(
+                        "[BHASHINI BATCH] Translated %d/%d strings (%s->%s)",
+                        len(out_list),
+                        len(indexed_items),
+                        s_lang,
+                        t_lang,
+                    )
+                    return results
 
             logger.warning(
-                "[BHASHINI TRANSLATION FAILED] Status %d: %s. Using original text fallback.",
+                "[BHASHINI BATCH FAILED] Status %d: %s. Using original texts fallback.",
                 resp.status_code,
                 resp.text[:200],
             )
         except requests.Timeout:
-            logger.error("[BHASHINI TRANSLATION TIMEOUT] Request timed out after %.1fs.", self.timeout)
+            logger.error("[BHASHINI BATCH TIMEOUT] Request timed out after %.1fs.", self.timeout)
         except Exception as exc:
-            logger.error("[BHASHINI TRANSLATION ERROR] Failed: %s", exc)
+            logger.error("[BHASHINI BATCH ERROR] Failed: %s", exc)
 
-        return text
+        return results
+
+    def translate_text(
+        self,
+        text: str,
+        source_lang: str,
+        target_lang: str = "en",
+    ) -> str:
+        """
+        Translates text between Indian languages and English using Bhashini Translation API.
+        Falls back to original text if translation fails or service is unavailable.
+        """
+        if not text or not text.strip():
+            return ""
+        translated_list = self.translate_texts([text], source_lang=source_lang, target_lang=target_lang)
+        return translated_list[0] if translated_list else text
 
     # -------------------------------------------------------------------------
     # Speech-to-Text (ASR)
@@ -445,3 +462,97 @@ def translate_response_to_language(text: str, target_lang: str) -> str:
 def synthesize_voice_response(text: str, target_lang: str) -> Optional[str]:
     """Generates base64 voice audio in fisherman's language."""
     return bhashini_client.text_to_speech(text, target_lang=target_lang)
+
+
+def translate_explanation_card(card: Dict[str, Any], target_lang: str) -> Dict[str, Any]:
+    """
+    Translates all dynamic human-readable fields of the risk explanation card to the target language
+    using a single Bhashini batch call. Preserves numbers, scores, units, and enums untouched.
+    """
+    if not card or not isinstance(card, dict) or not target_lang or target_lang.lower().strip() == "en":
+        return card
+
+    t_lang = target_lang.lower().strip()
+
+    items_to_translate: List[Tuple[str, str]] = []
+
+    # 1. Decision label and subtitle
+    if card.get("decision_label") and isinstance(card["decision_label"], str):
+        items_to_translate.append(("decision_label", card["decision_label"]))
+    if card.get("decision_subtitle") and isinstance(card["decision_subtitle"], str):
+        items_to_translate.append(("decision_subtitle", card["decision_subtitle"]))
+
+    # 2. Hazards and watch items
+    if card.get("dominant_hazard") and isinstance(card["dominant_hazard"], str):
+        items_to_translate.append(("dominant_hazard", card["dominant_hazard"]))
+    if card.get("primary_thing_to_watch") and isinstance(card["primary_thing_to_watch"], str):
+        items_to_translate.append(("primary_thing_to_watch", card["primary_thing_to_watch"]))
+    if card.get("primary_thing_to_watch_reason") and isinstance(card["primary_thing_to_watch_reason"], str):
+        items_to_translate.append(("primary_thing_to_watch_reason", card["primary_thing_to_watch_reason"]))
+
+    # 3. Vessel evaluated string
+    if card.get("vessel_evaluated") and isinstance(card["vessel_evaluated"], str):
+        items_to_translate.append(("vessel_evaluated", card["vessel_evaluated"]))
+
+    # 4. Action guidance
+    action_g = card.get("action_guidance")
+    if isinstance(action_g, dict):
+        if action_g.get("headline") and isinstance(action_g["headline"], str):
+            items_to_translate.append(("action_guidance.headline", action_g["headline"]))
+        if action_g.get("action_text") and isinstance(action_g["action_text"], str):
+            items_to_translate.append(("action_guidance.action_text", action_g["action_text"]))
+
+    # 5. Factors
+    factors = card.get("factors")
+    if isinstance(factors, list):
+        for idx, factor in enumerate(factors):
+            if isinstance(factor, dict):
+                if factor.get("name") and isinstance(factor["name"], str):
+                    items_to_translate.append((f"factor.{idx}.name", factor["name"]))
+                if factor.get("interpretation") and isinstance(factor["interpretation"], str):
+                    items_to_translate.append((f"factor.{idx}.interpretation", factor["interpretation"]))
+                if factor.get("reason") and isinstance(factor["reason"], str):
+                    items_to_translate.append((f"factor.{idx}.reason", factor["reason"]))
+                if factor.get("threshold_context") and isinstance(factor["threshold_context"], str):
+                    items_to_translate.append((f"factor.{idx}.threshold_context", factor["threshold_context"]))
+                if factor.get("status_label") and isinstance(factor["status_label"], str):
+                    items_to_translate.append((f"factor.{idx}.status_label", factor["status_label"]))
+
+    if not items_to_translate:
+        return card
+
+    raw_texts = [text for _, text in items_to_translate]
+    try:
+        translated_texts = bhashini_client.translate_texts(raw_texts, source_lang="en", target_lang=t_lang)
+
+        for (key_path, _), trans_val in zip(items_to_translate, translated_texts):
+            if not trans_val:
+                continue
+            if key_path == "decision_label":
+                card["decision_label"] = trans_val
+            elif key_path == "decision_subtitle":
+                card["decision_subtitle"] = trans_val
+            elif key_path == "dominant_hazard":
+                card["dominant_hazard"] = trans_val
+            elif key_path == "primary_thing_to_watch":
+                card["primary_thing_to_watch"] = trans_val
+            elif key_path == "primary_thing_to_watch_reason":
+                card["primary_thing_to_watch_reason"] = trans_val
+            elif key_path == "vessel_evaluated":
+                card["vessel_evaluated"] = trans_val
+            elif key_path == "action_guidance.headline":
+                card["action_guidance"]["headline"] = trans_val
+            elif key_path == "action_guidance.action_text":
+                card["action_guidance"]["action_text"] = trans_val
+            elif key_path.startswith("factor."):
+                parts = key_path.split(".")
+                f_idx = int(parts[1])
+                f_key = parts[2]
+                if f_idx < len(card.get("factors", [])):
+                    card["factors"][f_idx][f_key] = trans_val
+    except Exception as exc:
+        logger.error("[BHASHINI] Failed to translate explanation card (%s): %s", t_lang, exc)
+
+    card["language"] = t_lang
+    return card
+

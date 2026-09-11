@@ -12,60 +12,60 @@ import { getActiveTrip, getTodayDateISO, setActiveLocation, setActiveDate, setAc
 // Configuration Flag: Set to false for live backend API calls (POST /api/orca/assess)
 export const USE_MOCK_API = false;
 
-// Backend Base URL configured via environment variable
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
-
-// Empty initial assessment — no mock/hardcoded data before first real assessment
-const EMPTY_INITIAL_ASSESSMENT: OrcaResponse = {
-  assessment: {
-    status: 'SAFE' as AssessmentStatus,
-    risk_score: 0,
-    summary: '',
-  },
-  pfz: { available: false },
-  marine: { available: false },
-  svas: { available: false },
-  hazards: [],
-  alerts: [],
-  meta: {},
-};
-
-// In-memory active session cache so tabs share the same trip state seamlessly
-let currentAssessmentState: OrcaResponse = EMPTY_INITIAL_ASSESSMENT;
-
-type AssessmentListener = (response: OrcaResponse) => void;
-const listeners: Set<AssessmentListener> = new Set();
-
-// Race condition guard: tracks the most recent request to prevent stale responses
-let latestRequestId: string | null = null;
-
-export function getCurrentAssessment(): OrcaResponse {
-  return currentAssessmentState;
-}
-
-export function subscribeToAssessment(listener: AssessmentListener): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-function notifyAssessmentListeners(response: OrcaResponse) {
-  // Race condition guard: only update if this is the latest request
-  const incomingRequestId = response.request_id || response.meta?.request_id;
-  if (latestRequestId && incomingRequestId && incomingRequestId !== latestRequestId) {
-    console.warn(`[ORCA ALERTS] Ignoring stale response: ${incomingRequestId} (latest: ${latestRequestId})`);
-    return;
+/**
+ * Resolves the backend base URL dynamically:
+ * 1. EXPO_PUBLIC_API_URL if configured
+ * 2. Window location hostname if running in Web browser
+ * 3. Fallback to http://127.0.0.1:8000
+ */
+export function getBaseUrl(): string {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL.replace(/\/+$/, '');
   }
-  currentAssessmentState = response;
-  listeners.forEach((listener) => {
-    try {
-      listener(response);
-    } catch (err) {
-      console.error('Error notifying assessment listener:', err);
+  if (typeof window !== 'undefined' && window.location) {
+    const hostname = window.location.hostname;
+    if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      return `http://${hostname}:8000`;
     }
-  });
+  }
+  return 'http://127.0.0.1:8000';
 }
+
+// Backend Base URL configured via environment variable
+export const BASE_URL = getBaseUrl();
+
+// Re-export shared assessment store functions to maintain backward compatibility and avoid circular dependencies
+import {
+  getCurrentAssessment,
+  clearCurrentAssessment,
+  subscribeToAssessment,
+  subscribeToSelectedPFZ,
+  notifyAssessmentListeners,
+  setAssessmentState,
+  getLatestRequestId,
+  setLatestRequestId,
+  getSelectedPFZId,
+  setSelectedPFZId,
+  getSelectedPFZ,
+  EMPTY_INITIAL_ASSESSMENT,
+} from './assessmentStore';
+
+export {
+  getCurrentAssessment,
+  clearCurrentAssessment,
+  subscribeToAssessment,
+  subscribeToSelectedPFZ,
+  notifyAssessmentListeners,
+  setAssessmentState,
+  getLatestRequestId,
+  setLatestRequestId,
+  getSelectedPFZId,
+  setSelectedPFZId,
+  getSelectedPFZ,
+  EMPTY_INITIAL_ASSESSMENT,
+};
+export type { AssessmentListener, SelectedPFZListener } from './assessmentStore';
+
 
 /**
  * Normalizes raw structured response from POST /api/orca/assess into OrcaResponse
@@ -96,13 +96,16 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
     julian_day: pfzDetails.julian_day,
     valid_until: pfzDetails.valid_until,
   };
-  const topCandidates = raw?.top_pfz || pfzRaw?.top_candidates || pfzDetails?.top_candidates || raw?.ui_action?.top_candidates || [];
+  const topCandidates =
+    (Array.isArray(pfzRaw?.top_candidates) && pfzRaw.top_candidates.length > 0)
+      ? pfzRaw.top_candidates
+      : (raw?.top_pfz || pfzDetails?.top_candidates || raw?.ui_action?.top_candidates || []);
 
   // Marine Weather Mapping
   const marineWeatherRaw = raw?.marine_weather || {};
-  const isMarineAvailable = marineWeatherRaw.status === 'success';
   const weatherData = marineWeatherRaw.weather || {};
   const marineData = marineWeatherRaw.marine || {};
+  const isMarineAvailable = marineWeatherRaw.status === 'success' || marineWeatherRaw.status === 'partial' || Boolean(weatherData.temperature_c !== undefined || marineData.wave_height_m !== undefined);
 
   // SVAS Mapping
   const svasRaw = raw?.svas || {};
@@ -151,9 +154,9 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
     pfz: Boolean(raw?.display?.pfz),
     pfz_mode: raw?.display?.pfz_mode || (raw?.display?.pfz ? (topCandidates.length === 1 ? 'single_pfz' : 'pfz_list') : 'none'),
     risk_explanation: Boolean(raw?.display?.risk_explanation),
-    marine: Boolean(raw?.display?.marine ?? (raw?.marine_weather?.status === 'success')),
-    svas: Boolean(raw?.display?.svas ?? (raw?.svas?.status === 'success')),
-    ocean_hazards: Boolean(raw?.display?.ocean_hazards ?? (raw?.ocean_analysis?.status === 'success')),
+    marine: Boolean(raw?.display?.marine ?? isMarineAvailable),
+    svas: Boolean(raw?.display?.svas ?? (raw?.svas?.status === 'success' || raw?.svas?.status === 'partial')),
+    ocean_hazards: Boolean(raw?.display?.ocean_hazards ?? (raw?.ocean_analysis?.status === 'success' || raw?.ocean_analysis?.status === 'partial')),
     risk_assessment: Boolean(raw?.display?.risk_assessment ?? (raw?.risk_required || raw?.risk?.status)),
     map_action: Boolean(raw?.display?.map_action ?? (raw?.ui_action != null)),
   };
@@ -187,16 +190,16 @@ export function normalizeBackendResponse(raw: any, req?: OrcaRequest): OrcaRespo
     display: displayFlags,
     marine: {
       available: isMarineAvailable,
-      temperature_c: weatherData.temperature_c,
-      wind_speed_knots: weatherData.wind_speed_knots,
-      wind_gusts_knots: weatherData.wind_gusts_knots,
-      wave_height_m: marineData.wave_height_m,
-      wave_period_seconds: marineData.wave_period_seconds,
-      sea_surface_temperature_c: marineData.sea_surface_temperature_c,
-      ocean_current_velocity_kmh: marineData.ocean_current_velocity_kmh,
-      wind_direction_degrees: weatherData.wind_direction_degrees,
-      wave_direction_degrees: marineData.wave_direction_degrees,
-      ocean_current_direction_degrees: marineData.ocean_current_direction_degrees,
+      temperature_c: weatherData.temperature_c ?? marineData.temperature_c,
+      wind_speed_knots: weatherData.wind_speed_knots ?? marineData.wind_speed_knots,
+      wind_gusts_knots: weatherData.wind_gusts_knots ?? marineData.wind_gusts_knots,
+      wave_height_m: marineData.wave_height_m ?? weatherData.wave_height_m,
+      wave_period_seconds: marineData.wave_period_seconds ?? weatherData.wave_period_seconds,
+      sea_surface_temperature_c: marineData.sea_surface_temperature_c ?? weatherData.sea_surface_temperature_c,
+      ocean_current_velocity_kmh: marineData.ocean_current_velocity_kmh ?? weatherData.ocean_current_velocity_kmh,
+      wind_direction_degrees: weatherData.wind_direction_degrees ?? marineData.wind_direction_degrees,
+      wave_direction_degrees: marineData.wave_direction_degrees ?? weatherData.wave_direction_degrees,
+      ocean_current_direction_degrees: marineData.ocean_current_direction_degrees ?? weatherData.ocean_current_direction_degrees,
     },
     svas: {
       available: isSvasAvailable,
@@ -258,10 +261,10 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
   }
 
   // Track this as the latest request for race condition prevention
-  latestRequestId = effectiveRequest.request_id || null;
+  setLatestRequestId(effectiveRequest.request_id || null);
 
   try {
-    const endpoint = `${BASE_URL.replace(/\/+$/, '')}/api/orca/assess`;
+    const endpoint = `${getBaseUrl()}/api/orca/assess`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -288,7 +291,7 @@ export async function getOrcaAssessment(request: OrcaRequest): Promise<OrcaRespo
 
     const rawData = await response.json();
     const normalized: OrcaResponse = normalizeBackendResponse(rawData, effectiveRequest);
-    
+
     console.log(`[ORCA ALERTS DEBUG] Request ID: ${effectiveRequest.request_id}`);
     console.log(`[ORCA ALERTS DEBUG] Alerts received: ${normalized.alerts?.length ?? 0}`);
     console.log(`[ORCA ALERTS DEBUG] Alert IDs:`, normalized.alerts?.map(a => a.id));
@@ -381,10 +384,10 @@ export async function queryOrcaAssistant(
     generate_audio: shouldGenAudio,
   };
 
-  latestRequestId = clientRequestId;
+  setLatestRequestId(clientRequestId);
 
   try {
-    const endpoint = `${BASE_URL.replace(/\/+$/, '')}/api/orca/assess`;
+    const endpoint = `${getBaseUrl()}/api/orca/assess`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {

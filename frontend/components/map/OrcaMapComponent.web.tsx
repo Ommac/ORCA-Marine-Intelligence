@@ -28,7 +28,9 @@ import { subscribeToMapFocus, MapFocusTarget } from '../../services/mapFocusStor
 export interface MapViewProps {
   response: OrcaResponse;
   activeLayers?: { pfz: boolean; myLocation: boolean; distance: boolean };
+  selectedPFZId?: string | null;
   onSelectPFZ?: (nearest?: PFZNearest) => void;
+  onSelectCandidate?: (candidate: PFZCandidate) => void;
   onViewDetails?: () => void;
 }
 
@@ -119,7 +121,13 @@ function MapCamera({
   return null;
 }
 
-export const OrcaMapComponent: React.FC<MapViewProps> = ({ response, activeLayers = { pfz: true, myLocation: true, distance: true } }) => {
+export const OrcaMapComponent: React.FC<MapViewProps> = ({
+  response,
+  activeLayers = { pfz: true, myLocation: true, distance: true },
+  selectedPFZId,
+  onSelectCandidate,
+  onViewDetails,
+}) => {
   const mapRef = useRef<L.Map | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [focusTarget, setFocusTarget] = useState<MapFocusTarget | null>(null);
@@ -127,10 +135,78 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({ response, activeLayer
   const fisherLon = response.request?.longitude ?? 0;
   const nearest = response.pfz.nearest;
   const fallback: PFZLatLng = [fisherLat, fisherLon];
-  const hasLivePFZ = response.pfz.metadata !== undefined;
-  const features = useMemo(() => hasLivePFZ ? normalizePFZFeatures(response.pfz.geometry, response.pfz.metadata) : [], [hasLivePFZ, response.pfz.geometry, response.pfz.metadata]);
+
+  const topCandidates: PFZCandidate[] = useMemo(
+    () => (response.pfz.top_candidates || response.top_pfz || focusTarget?.top_candidates || []) as PFZCandidate[],
+    [response.pfz.top_candidates, response.top_pfz, focusTarget?.top_candidates]
+  );
+
+  const activeSelectedCandidate = useMemo(() => {
+    if (topCandidates.length > 0) {
+      if (selectedPFZId) {
+        const found = topCandidates.find((c) => c.id === selectedPFZId);
+        if (found) return found;
+      }
+      if (focusTarget?.rank) {
+        const foundRank = topCandidates.find((c) => c.rank === focusTarget.rank);
+        if (foundRank) return foundRank;
+      }
+      return topCandidates.find((c) => c.recommended) || topCandidates[0];
+    }
+    return null;
+  }, [topCandidates, selectedPFZId, focusTarget]);
+
+  const activePFZGeometry = useMemo(() => {
+    return (
+      activeSelectedCandidate?.geometry ||
+      focusTarget?.geometry ||
+      response.pfz.geometry
+    );
+  }, [activeSelectedCandidate?.geometry, focusTarget?.geometry, response.pfz.geometry]);
+
+  const activePFZMetadata = useMemo(() => {
+    const base = response.pfz.metadata || {};
+    if (activeSelectedCandidate) {
+      return {
+        ...base,
+        category: activeSelectedCandidate.category || base.category,
+        uid: activeSelectedCandidate.uid || base.uid,
+        sno: activeSelectedCandidate.sno || base.sno,
+        data_year: activeSelectedCandidate.data_year || base.data_year,
+        julian_day: activeSelectedCandidate.julian_day || base.julian_day,
+        valid_until: activeSelectedCandidate.valid_until || base.valid_until,
+        rank: activeSelectedCandidate.rank,
+        label: activeSelectedCandidate.label,
+        distance_km: activeSelectedCandidate.distance_km,
+        direction: activeSelectedCandidate.direction,
+      };
+    }
+    return base;
+  }, [activeSelectedCandidate, response.pfz.metadata]);
+
+  const hasLivePFZ = Boolean(activePFZGeometry || response.pfz.metadata !== undefined);
+  const features = useMemo(
+    () => (activePFZGeometry ? normalizePFZFeatures(activePFZGeometry, activePFZMetadata) : []),
+    [activePFZGeometry, activePFZMetadata]
+  );
   const bounds = useMemo(() => calculatePFZBounds(features), [features]);
-  const distanceLine = useMemo(() => createDistanceLine(fisherLat, fisherLon, nearest), [fisherLat, fisherLon, nearest]);
+
+  const targetPointForRoute = useMemo(() => {
+    if (activeSelectedCandidate) {
+      return {
+        latitude: activeSelectedCandidate.coordinates.latitude,
+        longitude: activeSelectedCandidate.coordinates.longitude,
+        distance_km: activeSelectedCandidate.distance_km,
+        direction: activeSelectedCandidate.direction,
+      };
+    }
+    return nearest;
+  }, [activeSelectedCandidate, nearest]);
+
+  const distanceLine = useMemo(
+    () => createDistanceLine(fisherLat, fisherLon, targetPointForRoute),
+    [fisherLat, fisherLon, targetPointForRoute]
+  );
 
   useEffect(() => {
     const unsub = subscribeToMapFocus((target) => {
@@ -148,6 +224,14 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({ response, activeLayer
 
   const handleRecenter = () => {
     if (!mapRef.current) return;
+    if (activeSelectedCandidate) {
+      mapRef.current.setView(
+        [activeSelectedCandidate.coordinates.latitude, activeSelectedCandidate.coordinates.longitude],
+        focusTarget?.zoom || 11,
+        { animate: true }
+      );
+      return;
+    }
     if (focusTarget && focusTarget.coordinates) {
       mapRef.current.setView([focusTarget.coordinates.latitude, focusTarget.coordinates.longitude], focusTarget.zoom || 11, { animate: true });
       return;
@@ -170,57 +254,91 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({ response, activeLayer
           focusTarget={focusTarget}
           onReady={(map) => { mapRef.current = map; setMapReady(true); }}
         />
-        {activeLayers.pfz && features.map((feature) => <PFZFeatureLayer key={feature.id} feature={feature} />)}
+        {activeLayers.pfz && features.map((feature) => (
+          <PFZFeatureLayer key={`${activeSelectedCandidate?.id || 'pfz'}-${feature.id}`} feature={feature} />
+        ))}
         {activeLayers.myLocation && <CircleMarker center={fallback} radius={8} pathOptions={{ color: '#38BDF8', fillColor: '#0A2540', fillOpacity: 1 }}><Popup><strong>Fishing Location</strong></Popup></CircleMarker>}
         {activeLayers.distance && distanceLine && <Polyline positions={distanceLine.features[0].geometry.coordinates.map(([longitude, latitude]: [number, number]) => [latitude, longitude] as PFZLatLng)} pathOptions={{ color: '#38BDF8', weight: 3, dashArray: '8 8' }} />}
 
         {/* Multi-Candidate Top PFZ Markers */}
-        {(() => {
-          const topCands: PFZCandidate[] = (response.pfz.top_candidates || response.top_pfz || focusTarget?.top_candidates || []) as PFZCandidate[];
-          const focusedRank = focusTarget?.rank || 1;
+        {topCandidates.map((cand: PFZCandidate) => {
+          const isSelected = activeSelectedCandidate ? cand.id === activeSelectedCandidate.id : cand.rank === 1;
+          const markerColor = isSelected ? '#FACC15' : cand.rank === 1 ? '#10B981' : '#0284C7';
+          const fillColor = isSelected ? '#0284C7' : cand.rank === 1 ? '#064E3B' : '#0369A1';
+          const radius = isSelected ? 13 : 9;
 
-          return topCands.map((cand: PFZCandidate) => {
-            const isFocused = focusTarget?.coordinates
-              ? Math.abs(cand.coordinates.latitude - focusTarget.coordinates.latitude) < 0.001 &&
-                Math.abs(cand.coordinates.longitude - focusTarget.coordinates.longitude) < 0.001
-              : cand.rank === focusedRank;
-
-            const markerColor = isFocused ? '#FACC15' : cand.rank === 1 ? '#10B981' : '#0284C7';
-            const fillColor = isFocused ? '#0284C7' : cand.rank === 1 ? '#064E3B' : '#0369A1';
-            const radius = isFocused ? 12 : 9;
-
-            return (
-              <CircleMarker
-                key={cand.id || `map-cand-${cand.rank}`}
-                center={[cand.coordinates.latitude, cand.coordinates.longitude]}
-                radius={radius}
-                pathOptions={{
-                  color: markerColor,
-                  fillColor: fillColor,
-                  fillOpacity: 0.95,
-                  weight: isFocused ? 3 : 2,
-                }}
-              >
-                <Popup>
-                  <div style={{ minWidth: 160 }}>
-                    <strong>{isFocused ? '🎯 ' : ''}{cand.label || `PFZ ${cand.rank}`}</strong>
-                    <div style={{ fontSize: 12, marginTop: 4, color: cand.rank === 1 ? '#15803D' : '#0369A1', fontWeight: 700 }}>
-                      {cand.recommended ? '🥇 Recommended' : `Rank #${cand.rank}`} • {cand.distance_km.toFixed(1)} km ({cand.direction})
-                    </div>
-                    {cand.recommendation_reason && (
-                      <div style={{ fontSize: 11, marginTop: 4, color: '#475569' }}>
-                        {cand.recommendation_reason}
-                      </div>
-                    )}
-                    <div style={{ fontSize: 10, marginTop: 4, color: '#94A3B8' }}>
-                      Lat: {cand.coordinates.latitude.toFixed(4)}°, Lon: {cand.coordinates.longitude.toFixed(4)}°
-                    </div>
+          return (
+            <CircleMarker
+              key={cand.id || `map-cand-${cand.rank}`}
+              center={[cand.coordinates.latitude, cand.coordinates.longitude]}
+              radius={radius}
+              eventHandlers={{
+                click: () => onSelectCandidate?.(cand),
+              }}
+              pathOptions={{
+                color: markerColor,
+                fillColor: fillColor,
+                fillOpacity: 0.95,
+                weight: isSelected ? 3.5 : 2,
+              }}
+            >
+              <Popup>
+                <div style={{ minWidth: 170 }}>
+                  <strong>{isSelected ? '🎯 Active Target: ' : ''}{cand.label || `PFZ #${cand.rank}`}</strong>
+                  <div style={{ fontSize: 12, marginTop: 4, color: isSelected ? '#0284C7' : cand.rank === 1 ? '#15803D' : '#0369A1', fontWeight: 700 }}>
+                    {cand.recommended ? '🥇 Recommended' : `Rank #${cand.rank}`} • {cand.distance_km.toFixed(1)} km ({cand.direction})
                   </div>
-                </Popup>
-              </CircleMarker>
-            );
-          });
-        })()}
+                  {cand.recommendation_reason && (
+                    <div style={{ fontSize: 11, marginTop: 4, color: '#475569' }}>
+                      {cand.recommendation_reason}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 10, marginTop: 4, color: '#94A3B8' }}>
+                    Lat: {cand.coordinates.latitude.toFixed(4)}°, Lon: {cand.coordinates.longitude.toFixed(4)}°
+                  </div>
+                  <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+                    {!isSelected && (
+                      <button
+                        onClick={() => onSelectCandidate?.(cand)}
+                        style={{
+                          flex: 1,
+                          padding: '4px 8px',
+                          backgroundColor: '#0284C7',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: 4,
+                          cursor: 'pointer',
+                          fontSize: 11,
+                          fontWeight: 700,
+                        }}
+                      >
+                        Select PFZ #{cand.rank}
+                      </button>
+                    )}
+                    {onViewDetails && (
+                      <button
+                        onClick={() => onViewDetails()}
+                        style={{
+                          flex: 1,
+                          padding: '4px 8px',
+                          backgroundColor: '#0F172A',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: 4,
+                          cursor: 'pointer',
+                          fontSize: 11,
+                          fontWeight: 700,
+                        }}
+                      >
+                        View Assessment
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </Popup>
+            </CircleMarker>
+          );
+        })}
 
         {/* Focused Target Single Marker Fallback if topCands is empty */}
         {focusTarget && focusTarget.coordinates && (!response.pfz.top_candidates || response.pfz.top_candidates.length === 0) && (

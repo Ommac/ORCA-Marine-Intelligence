@@ -1,20 +1,24 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Map, Navigation, Compass, CheckCircle2 } from 'lucide-react-native';
+import { Map, Navigation, Compass, CheckCircle2, ArrowUpRight } from 'lucide-react-native';
 import { PFZCandidate } from '../types/orca';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../constants/theme';
-import { formatDistance } from '../utils/formatting';
+import { formatDistanceKm } from '../utils/formatting';
 
 interface PFZTopCardsProps {
   candidates?: PFZCandidate[];
-  onSelect?: (candidate: PFZCandidate) => void;
+  selectedId?: string | null;
   selectedRank?: number;
+  onSelect?: (candidate: PFZCandidate) => void;
+  onViewAssessment?: (candidate: PFZCandidate) => void;
 }
 
 export const PFZTopCards: React.FC<PFZTopCardsProps> = ({
   candidates = [],
-  onSelect,
+  selectedId,
   selectedRank = 1,
+  onSelect,
+  onViewAssessment,
 }) => {
   if (!candidates || candidates.length === 0) {
     return null;
@@ -50,16 +54,18 @@ export const PFZTopCards: React.FC<PFZTopCardsProps> = ({
         {candidates.map((cand) => {
           const rankInfo = getRankMedal(cand.rank);
           const isPrimary = cand.rank === 1 || cand.recommended;
-          const isSelected = selectedRank === cand.rank;
+          const isSelected = selectedId ? cand.id === selectedId : selectedRank === cand.rank;
 
           return (
-            <View
+            <TouchableOpacity
               key={cand.id || `cand-${cand.rank}`}
               style={[
                 styles.card,
                 isPrimary && styles.cardPrimary,
                 isSelected && styles.cardSelected,
               ]}
+              onPress={() => onSelect?.(cand)}
+              activeOpacity={0.9}
             >
               {/* Card Top Row: Badge & Distance */}
               <View style={styles.cardHeader}>
@@ -72,7 +78,7 @@ export const PFZTopCards: React.FC<PFZTopCardsProps> = ({
 
                 <View style={styles.distanceBlock}>
                   <Text style={styles.distanceValue}>
-                    {formatDistance(cand.distance_km)}
+                    {formatDistanceKm(cand.distance_km)}
                   </Text>
                   <Text style={styles.directionValue}>
                     {cand.direction || 'Sea'}
@@ -99,22 +105,41 @@ export const PFZTopCards: React.FC<PFZTopCardsProps> = ({
                 {cand.category && (
                   <Text style={styles.categoryBadge}>{cand.category}</Text>
                 )}
+                {isSelected && (
+                  <View style={styles.selectedBadge}>
+                    <Text style={styles.selectedBadgeText}>SELECTED TARGET</Text>
+                  </View>
+                )}
               </View>
 
-              {/* Action Button: Show on Map */}
-              <TouchableOpacity
-                style={[styles.mapButton, isPrimary ? styles.mapButtonPrimary : styles.mapButtonSecondary]}
-                onPress={() => onSelect?.(cand)}
-                activeOpacity={0.8}
-                accessibilityLabel={`Show ${cand.label || `PFZ ${cand.rank}`} on map`}
-              >
-                <Map size={14} color={isPrimary ? '#FFFFFF' : COLORS.oceanBlue} />
-                <Text style={[styles.mapButtonText, isPrimary ? styles.mapButtonTextPrimary : styles.mapButtonTextSecondary]}>
-                  SHOW ON MAP
-                </Text>
-                <Navigation size={12} color={isPrimary ? '#93C5FD' : COLORS.oceanBlue} />
-              </TouchableOpacity>
-            </View>
+              {/* Action Buttons Row */}
+              <View style={styles.buttonRow}>
+                <TouchableOpacity
+                  style={[styles.mapButton, isSelected ? styles.mapButtonSelected : isPrimary ? styles.mapButtonPrimary : styles.mapButtonSecondary]}
+                  onPress={() => onSelect?.(cand)}
+                  activeOpacity={0.8}
+                  accessibilityLabel={`Select ${cand.label || `PFZ ${cand.rank}`} on map`}
+                >
+                  <Map size={14} color={isSelected ? '#FFFFFF' : isPrimary ? '#FFFFFF' : COLORS.oceanBlue} />
+                  <Text style={[styles.mapButtonText, isSelected ? styles.mapButtonTextSelected : isPrimary ? styles.mapButtonTextPrimary : styles.mapButtonTextSecondary]}>
+                    {isSelected ? 'TARGET ACTIVE' : 'SELECT ON MAP'}
+                  </Text>
+                  <Navigation size={12} color={isSelected ? '#FDE047' : isPrimary ? '#93C5FD' : COLORS.oceanBlue} />
+                </TouchableOpacity>
+
+                {onViewAssessment && (
+                  <TouchableOpacity
+                    style={styles.assessButton}
+                    onPress={() => onViewAssessment(cand)}
+                    activeOpacity={0.8}
+                    accessibilityLabel={`View full assessment for ${cand.label || `PFZ ${cand.rank}`}`}
+                  >
+                    <Text style={styles.assessButtonText}>ASSESS PFZ #{cand.rank}</Text>
+                    <ArrowUpRight size={13} color={COLORS.oceanBlue} strokeWidth={2.5} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </TouchableOpacity>
           );
         })}
       </View>
@@ -235,13 +260,35 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
   },
+  selectedBadge: {
+    backgroundColor: '#FEF08A',
+    borderColor: '#EAB308',
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  selectedBadgeText: {
+    ...TYPOGRAPHY.caption,
+    color: '#854D0E',
+    fontWeight: '800',
+    fontSize: 9,
+    letterSpacing: 0.5,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
   mapButton: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
     borderRadius: RADIUS.md,
   },
   mapButtonPrimary: {
@@ -252,16 +299,43 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#BAE6FD',
   },
+  mapButtonSelected: {
+    backgroundColor: '#0F766E',
+    borderWidth: 1,
+    borderColor: '#14B8A6',
+  },
   mapButtonText: {
     ...TYPOGRAPHY.caption,
     fontWeight: '800',
-    fontSize: 12,
-    letterSpacing: 0.5,
+    fontSize: 11,
+    letterSpacing: 0.3,
   },
   mapButtonTextPrimary: {
     color: '#FFFFFF',
   },
   mapButtonTextSecondary: {
     color: COLORS.oceanBlue,
+  },
+  mapButtonTextSelected: {
+    color: '#FFFFFF',
+  },
+  assessButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderRadius: RADIUS.md,
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1.2,
+    borderColor: COLORS.skyBlueBorder,
+  },
+  assessButtonText: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.oceanBlue,
+    fontWeight: '800',
+    fontSize: 11,
+    letterSpacing: 0.3,
   },
 });

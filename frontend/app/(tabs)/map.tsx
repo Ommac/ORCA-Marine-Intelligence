@@ -7,20 +7,27 @@ import { OrcaHeader } from '../../components/OrcaHeader';
 import { OrcaMapView } from '../../components/MapView';
 import { MapLegend, ActiveMapLayers } from '../../components/MapLegend';
 import { PFZCard } from '../../components/PFZCard';
+import { PFZTopCards } from '../../components/PFZTopCards';
 import { ResponsiveContainer } from '../../components/ResponsiveContainer';
 import {
   getCurrentAssessment,
   subscribeToAssessment,
+  getSelectedPFZ,
+  setSelectedPFZId,
+  getSelectedPFZId,
+  subscribeToSelectedPFZ,
 } from '../../services/api';
+import { setMapFocus } from '../../services/mapFocusStore';
 import { getActiveTrip, subscribeToTrip } from '../../services/tripStore';
-import { OrcaResponse } from '../../types/orca';
+import { OrcaResponse, PFZCandidate } from '../../types/orca';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
-import { formatDistance } from '../../utils/formatting';
+import { formatDistanceKm } from '../../utils/formatting';
 
 export default function MapScreen() {
   const router = useRouter();
   const [activeTrip, setActiveTrip] = useState(getActiveTrip());
   const [data, setData] = useState<OrcaResponse>(getCurrentAssessment());
+  const [selectedPFZId, setSelectedPFZIdState] = useState<string | null>(getSelectedPFZId());
   const [activeLayers, setActiveLayers] = useState<ActiveMapLayers>({
     pfz: true,
     myLocation: true,
@@ -34,9 +41,13 @@ export default function MapScreen() {
     const unsubAssessment = subscribeToAssessment((updated) => {
       setData(updated);
     });
+    const unsubPFZ = subscribeToSelectedPFZ((id) => {
+      setSelectedPFZIdState(id);
+    });
     return () => {
       unsubTrip();
       unsubAssessment();
+      unsubPFZ();
     };
   }, []);
 
@@ -47,11 +58,39 @@ export default function MapScreen() {
     }));
   };
 
-  const handleViewAssessment = () => {
-    router.push('/assessment');
+  const topCandidates = (data.pfz?.top_candidates || data.top_pfz || []) as PFZCandidate[];
+  const selectedPFZ = getSelectedPFZ(data, selectedPFZId);
+
+  const handleSelectCandidate = (cand: PFZCandidate) => {
+    setSelectedPFZId(cand.id);
+    setSelectedPFZIdState(cand.id);
+    setMapFocus({
+      coordinates: cand.coordinates,
+      rank: cand.rank,
+      label: cand.label || `PFZ #${cand.rank}`,
+      geometry: cand.geometry,
+      zoom: 12,
+      top_candidates: topCandidates,
+    });
   };
 
-  const hasPfz = data.pfz && data.pfz.available && data.pfz.nearest;
+  const handleViewAssessment = (targetPFZ?: PFZCandidate | null) => {
+    const cand = targetPFZ !== undefined ? targetPFZ : selectedPFZ;
+    if (cand) {
+      setSelectedPFZId(cand.id);
+      router.push({
+        pathname: '/assessment',
+        params: {
+          pfzId: cand.id,
+          rank: String(cand.rank),
+        },
+      });
+    } else {
+      router.push('/assessment');
+    }
+  };
+
+  const hasPfz = Boolean(selectedPFZ || (data.pfz && data.pfz.available && data.pfz.nearest));
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -80,11 +119,18 @@ export default function MapScreen() {
             </View>
           </View>
 
-          {hasPfz ? (
+          {selectedPFZ ? (
             <View style={styles.pfzBadge}>
               <Compass size={14} color="#15803D" />
               <Text style={styles.pfzBadgeText}>
-                PFZ: {formatDistance(data.pfz.nearest?.distance_km)} ({data.pfz.nearest?.direction || 'W'})
+                PFZ #{selectedPFZ.rank}: {formatDistanceKm(selectedPFZ.distance_km)} ({selectedPFZ.direction || 'W'})
+              </Text>
+            </View>
+          ) : hasPfz ? (
+            <View style={styles.pfzBadge}>
+              <Compass size={14} color="#15803D" />
+              <Text style={styles.pfzBadgeText}>
+                PFZ: {formatDistanceKm(data.pfz.nearest?.distance_km)} ({data.pfz.nearest?.direction || 'W'})
               </Text>
             </View>
           ) : (
@@ -99,7 +145,9 @@ export default function MapScreen() {
         <OrcaMapView
           response={data}
           activeLayers={activeLayers}
-          onViewDetails={handleViewAssessment}
+          selectedPFZId={selectedPFZ?.id}
+          onSelectCandidate={handleSelectCandidate}
+          onViewDetails={() => handleViewAssessment(selectedPFZ)}
         />
 
         {/* SAMUDRA-style Layer Toggles & Legend */}
@@ -110,8 +158,25 @@ export default function MapScreen() {
           />
         </View>
 
-        {/* Nearest PFZ Summary Card with Action */}
-        <PFZCard pfz={data.pfz} onViewOnMap={handleViewAssessment} />
+        {/* Top PFZ Candidate Selection Cards if available */}
+        {topCandidates.length > 0 && (
+          <View style={styles.candidatesWrapper}>
+            <PFZTopCards
+              candidates={topCandidates}
+              selectedId={selectedPFZ?.id}
+              selectedRank={selectedPFZ?.rank || 1}
+              onSelect={handleSelectCandidate}
+              onViewAssessment={(cand) => handleViewAssessment(cand)}
+            />
+          </View>
+        )}
+
+        {/* Selected / Nearest PFZ Summary Card with Action */}
+        <PFZCard
+          pfz={data.pfz}
+          candidate={selectedPFZ}
+          onViewOnMap={() => handleViewAssessment(selectedPFZ)}
+        />
         </ResponsiveContainer>
       </ScrollView>
     </SafeAreaView>
@@ -211,6 +276,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   legendWrapper: {
+    marginTop: SPACING.md,
+  },
+  candidatesWrapper: {
     marginTop: SPACING.md,
   },
 });

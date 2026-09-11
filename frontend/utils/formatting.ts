@@ -6,9 +6,27 @@
 import { AssessmentStatus, SeverityLevel } from '../types/orca';
 import { COLORS } from '../constants/theme';
 
-export function formatDistance(km?: number): string {
-  if (km === undefined || km === null || isNaN(km)) return 'Not available';
+/**
+ * KM-only distance formatter (converts numeric distance in km to user-facing string).
+ * All user-facing distances in ORCA must be displayed in kilometers (km).
+ */
+export function formatDistanceKm(distanceKm?: number): string {
+  if (distanceKm === undefined || distanceKm === null || isNaN(distanceKm)) return 'Not available';
+  return `${distanceKm.toFixed(1)} km`;
+}
+
+/**
+ * Converts distance in Nautical Miles (NM) to Kilometers (km) and formats as user-facing string.
+ * 1 NM = 1.852 km
+ */
+export function formatDistanceKmFromNm(distanceNm?: number): string {
+  if (distanceNm === undefined || distanceNm === null || isNaN(distanceNm)) return 'Not available';
+  const km = distanceNm * 1.852;
   return `${km.toFixed(1)} km`;
+}
+
+export function formatDistance(km?: number): string {
+  return formatDistanceKm(km);
 }
 
 export function formatKnots(knots?: number): string {

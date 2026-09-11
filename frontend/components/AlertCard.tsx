@@ -11,20 +11,36 @@ import {
   AlertTriangle,
   CheckCircle2,
 } from 'lucide-react-native';
-import { Hazard } from '../types/orca';
+import { Hazard, Alert, SeverityLevel } from '../types/orca';
 import { getSeverityTheme } from '../utils/formatting';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../constants/theme';
 
-interface AlertCardProps {
-  hazard: Hazard;
+export interface AlertCardProps {
+  hazard?: Hazard;
+  alert?: Alert;
 }
 
-export const AlertCard: React.FC<AlertCardProps> = ({ hazard }) => {
-  const theme = getSeverityTheme(hazard.severity);
-  const isNone = hazard.severity === 'NONE';
+export const AlertCard: React.FC<AlertCardProps> = ({ hazard, alert }) => {
+  const effectiveTitle = alert?.title || hazard?.title || 'Marine Advisory';
+  const effectiveDescription = alert?.message || hazard?.description || '';
+  const rawSeverity = (alert?.severity?.toUpperCase() || hazard?.severity || 'INFO') as string;
+  const effectiveSeverity: SeverityLevel = 
+    rawSeverity === 'CRITICAL' ? 'CRITICAL' :
+    rawSeverity === 'HIGH' ? 'HIGH' :
+    rawSeverity === 'MODERATE' ? 'MODERATE' :
+    rawSeverity === 'MEDIUM' ? 'MEDIUM' :
+    rawSeverity === 'LOW' ? 'LOW' :
+    rawSeverity === 'NONE' ? 'NONE' : 'INFO';
+
+  const effectiveType = alert?.type || hazard?.type || 'ocean';
+  const effectiveSource = alert?.source || hazard?.source;
+  const effectiveUpdatedAt = alert?.timestamp || hazard?.updated_at;
+
+  const theme = getSeverityTheme(effectiveSeverity);
+  const isNone = effectiveSeverity === 'NONE';
 
   const getHazardIcon = () => {
-    const typeLower = hazard.type.toLowerCase();
+    const typeLower = effectiveType.toLowerCase();
     if (typeLower.includes('cyclone')) {
       return <Flame size={24} color={theme.accentColor} strokeWidth={2.4} />;
     }
@@ -73,26 +89,26 @@ export const AlertCard: React.FC<AlertCardProps> = ({ hazard }) => {
       </View>
 
       <Text style={[styles.title, { color: COLORS.textPrimary }]}>
-        {hazard.title}
+        {effectiveTitle}
       </Text>
 
       <Text style={styles.description}>
-        {hazard.description}
+        {effectiveDescription}
       </Text>
 
-      {(hazard.updated_at || hazard.source) && (
+      {(effectiveUpdatedAt || effectiveSource) && (
         <View style={styles.footerRow}>
-          {hazard.updated_at && (
+          {effectiveUpdatedAt && (
             <View style={styles.footerItem}>
               <Clock size={13} color={COLORS.textTertiary} />
-              <Text style={styles.footerText}>Updated: {hazard.updated_at}</Text>
+              <Text style={styles.footerText}>Updated: {effectiveUpdatedAt}</Text>
             </View>
           )}
 
-          {hazard.source && (
+          {effectiveSource && (
             <View style={styles.footerItem}>
               <Building2 size={13} color={COLORS.textTertiary} />
-              <Text style={styles.footerText}>Source: {hazard.source}</Text>
+              <Text style={styles.footerText}>Source: {effectiveSource}</Text>
             </View>
           )}
         </View>

@@ -29,16 +29,30 @@ import { ResponsiveContainer } from '../components/ResponsiveContainer';
 import {
   getCurrentAssessment,
   subscribeToAssessment,
+  getSelectedPFZ,
+  setSelectedPFZId,
+  getSelectedPFZId,
 } from '../services/api';
+import { setMapFocus } from '../services/mapFocusStore';
 import { getTodayDateISO } from '../services/tripStore';
 import { OrcaResponse } from '../types/orca';
-import { formatDateToFisherman } from '../utils/formatting';
+import { formatDateToFisherman, formatDistanceKm } from '../utils/formatting';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../constants/theme';
 
 export default function AssessmentScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams();
+  const params = useLocalSearchParams<{ pfzId?: string; rank?: string; locationName?: string }>();
   const [data, setData] = useState<OrcaResponse>(getCurrentAssessment());
+  const [activePfzId, setActivePfzId] = useState<string | null>(
+    params.pfzId || getSelectedPFZId()
+  );
+
+  useEffect(() => {
+    if (params.pfzId) {
+      setSelectedPFZId(params.pfzId);
+      setActivePfzId(params.pfzId);
+    }
+  }, [params.pfzId]);
 
   useEffect(() => {
     // Keep synced with centralized active session
@@ -48,10 +62,17 @@ export default function AssessmentScreen() {
     return () => unsubscribe();
   }, []);
 
+  const selectedPFZ = getSelectedPFZ(data, activePfzId);
+
   const handleShare = async () => {
     try {
+      const distStr = selectedPFZ
+        ? formatDistanceKm(selectedPFZ.distance_km)
+        : data.pfz.nearest
+        ? formatDistanceKm(data.pfz.nearest.distance_km)
+        : 'N/A';
       await Share.share({
-        message: `ORCA Marine Assessment for ${data.request?.date || 'Today'}: Overall condition is ${data.assessment.status} (Risk Score: ${data.assessment.risk_score}/100). Nearest Fishing Zone: ${data.pfz.nearest?.distance_km ?? 'N/A'} km away.`,
+        message: `ORCA Marine Assessment for ${data.request?.date || 'Today'}: Overall condition is ${data.assessment.status} (Risk Score: ${data.assessment.risk_score}/100). Target Fishing Zone: ${distStr} away.`,
       });
     } catch {
       // ignore
@@ -59,6 +80,17 @@ export default function AssessmentScreen() {
   };
 
   const handleViewOnMap = () => {
+    if (selectedPFZ) {
+      setSelectedPFZId(selectedPFZ.id);
+      setMapFocus({
+        coordinates: selectedPFZ.coordinates,
+        label: selectedPFZ.label || `PFZ #${selectedPFZ.rank}`,
+        rank: selectedPFZ.rank,
+        geometry: selectedPFZ.geometry,
+        zoom: 12,
+        top_candidates: data.pfz.top_candidates || data.top_pfz,
+      });
+    }
     router.push('/(tabs)/map');
   };
 
@@ -113,7 +145,7 @@ export default function AssessmentScreen() {
           <RiskCard assessment={data.assessment} />
 
           {/* 2. Potential Fishing Zone (PFZ) Card */}
-          <PFZCard pfz={data.pfz} onViewOnMap={handleViewOnMap} />
+          <PFZCard pfz={data.pfz} candidate={selectedPFZ} onViewOnMap={handleViewOnMap} />
 
           {/* 3. Sea Conditions Grid Card */}
           <MarineConditionsCard marine={data.marine} />
@@ -126,7 +158,7 @@ export default function AssessmentScreen() {
 
           {/* 6. Visual "WHY?" Risk Explanation Card or Fallback */}
           {data.risk_explanation ? (
-            <RiskExplanationCard explanation={data.risk_explanation} />
+            <RiskExplanationCard explanation={data.risk_explanation} language={data.language} />
           ) : (
             <View style={styles.explanationCard}>
               <View style={styles.explanationHeader}>

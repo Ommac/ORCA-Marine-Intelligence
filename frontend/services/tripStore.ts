@@ -14,7 +14,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PRESET_LOCATIONS } from '../constants/locations';
 import { PresetLocation } from '../types/orca';
-import { clearCurrentAssessment } from './api';
+import { clearCurrentAssessment } from './assessmentStore';
 
 export interface TripLocation {
   id?: string;

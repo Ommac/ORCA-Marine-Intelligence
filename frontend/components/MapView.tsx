@@ -1,5 +1,5 @@
 import React from 'react';
-import { OrcaResponse, PFZNearest } from '../types/orca';
+import { OrcaResponse, PFZNearest, PFZCandidate } from '../types/orca';
 import { OrcaMapComponent } from './map/OrcaMapComponent';
 
 export interface MapViewProps {
@@ -9,7 +9,9 @@ export interface MapViewProps {
     myLocation: boolean;
     distance: boolean;
   };
+  selectedPFZId?: string | null;
   onSelectPFZ?: (nearest?: PFZNearest) => void;
+  onSelectCandidate?: (candidate: PFZCandidate) => void;
   onViewDetails?: () => void;
 }
 

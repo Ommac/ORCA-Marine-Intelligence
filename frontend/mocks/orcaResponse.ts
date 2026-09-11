@@ -105,6 +105,7 @@ export const MOCK_PALGHAR_RESPONSE: OrcaResponse = {
       source: 'INCOIS',
     },
   ],
+  alerts: [],
   meta: {
     generated_at: '2026-09-02T17:00:00',
     sources: ['INCOIS', 'Open-Meteo', 'IMD'],
@@ -211,6 +212,7 @@ export const MOCK_RATNAGIRI_SAFE_RESPONSE: OrcaResponse = {
       source: 'INCOIS',
     },
   ],
+  alerts: [],
   meta: {
     generated_at: '2026-09-02T17:00:00',
     sources: ['INCOIS', 'Open-Meteo'],

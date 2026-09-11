@@ -2,14 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import MapView, { Callout, Circle, Marker, Polygon, Polyline, Region } from 'react-native-maps';
 import { Minus, Navigation, Plus } from 'lucide-react-native';
-import { OrcaResponse, PFZNearest } from '../../types/orca';
+import { OrcaResponse, PFZNearest, PFZCandidate } from '../../types/orca';
 import { NormalizedPFZFeature, PFZLatLng, calculatePFZBounds, normalizePFZFeatures } from '../../utils/pfzGeometry';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
 
 export interface MapViewProps {
   response: OrcaResponse;
   activeLayers?: { pfz: boolean; myLocation: boolean; distance: boolean };
+  selectedPFZId?: string | null;
   onSelectPFZ?: (nearest?: PFZNearest) => void;
+  onSelectCandidate?: (candidate: PFZCandidate) => void;
   onViewDetails?: () => void;
 }
 
@@ -70,13 +72,60 @@ function featureCoordinates(features: NormalizedPFZFeature[]): PFZLatLng[] {
   return positions;
 }
 
-export const OrcaMapComponent: React.FC<MapViewProps> = ({ response, activeLayers = { pfz: true, myLocation: true, distance: true }, onSelectPFZ }) => {
-  const mapRef = useRef<MapView | null>(null);
+export const OrcaMapComponent: React.FC<MapViewProps> = ({
+  response,
+  activeLayers = { pfz: true, myLocation: true, distance: true },
+  selectedPFZId,
+  onSelectPFZ,
+  onSelectCandidate,
+}) => {
+  const mapRef = useRef<any>(null);
   const [mapReady, setMapReady] = useState(false);
   const fisherLat = response.request?.latitude ?? 0;
   const fisherLon = response.request?.longitude ?? 0;
-  const hasLivePFZ = response.pfz.metadata !== undefined;
-  const features = useMemo(() => hasLivePFZ ? normalizePFZFeatures(response.pfz.geometry, response.pfz.metadata) : [], [hasLivePFZ, response.pfz.geometry, response.pfz.metadata]);
+  const topCandidates: PFZCandidate[] = useMemo(
+    () => (response.pfz.top_candidates || response.top_pfz || []) as PFZCandidate[],
+    [response.pfz.top_candidates, response.top_pfz]
+  );
+
+  const activeSelectedCandidate = useMemo(() => {
+    if (topCandidates.length > 0) {
+      if (selectedPFZId) {
+        const found = topCandidates.find((c) => c.id === selectedPFZId);
+        if (found) return found;
+      }
+      return topCandidates.find((c) => c.recommended) || topCandidates[0];
+    }
+    return null;
+  }, [topCandidates, selectedPFZId]);
+
+  const activePFZGeometry = useMemo(() => {
+    return activeSelectedCandidate?.geometry || response.pfz.geometry;
+  }, [activeSelectedCandidate?.geometry, response.pfz.geometry]);
+
+  const activePFZMetadata = useMemo(() => {
+    const base = response.pfz.metadata || {};
+    if (activeSelectedCandidate) {
+      return {
+        ...base,
+        category: activeSelectedCandidate.category || base.category,
+        uid: activeSelectedCandidate.uid || base.uid,
+        sno: activeSelectedCandidate.sno || base.sno,
+        data_year: activeSelectedCandidate.data_year || base.data_year,
+        julian_day: activeSelectedCandidate.julian_day || base.julian_day,
+        valid_until: activeSelectedCandidate.valid_until || base.valid_until,
+        rank: activeSelectedCandidate.rank,
+        label: activeSelectedCandidate.label,
+      };
+    }
+    return base;
+  }, [activeSelectedCandidate, response.pfz.metadata]);
+
+  const hasLivePFZ = Boolean(activePFZGeometry || response.pfz.metadata !== undefined);
+  const features = useMemo(
+    () => (activePFZGeometry ? normalizePFZFeatures(activePFZGeometry, activePFZMetadata) : []),
+    [activePFZGeometry, activePFZMetadata]
+  );
   const bounds = useMemo(() => calculatePFZBounds(features), [features]);
   const center: Region = { latitude: fisherLat, longitude: fisherLon, latitudeDelta: 4, longitudeDelta: 4 };
 
@@ -93,17 +142,22 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({ response, activeLayer
 
   return <View style={styles.container}>
     <MapView ref={mapRef} style={styles.fullMap} mapType="satellite" initialRegion={center} onMapReady={() => setMapReady(true)}>
-      {activeLayers.pfz && features.map((feature) => <PFZFeatureLayer key={feature.id} feature={feature} />)}
+      {activeLayers.pfz && features.map((feature) => (
+        <PFZFeatureLayer key={`${activeSelectedCandidate?.id || 'pfz'}-${feature.id}`} feature={feature} />
+      ))}
       {activeLayers.myLocation && <Circle center={{ latitude: fisherLat, longitude: fisherLon }} radius={500} strokeColor="#38BDF8" fillColor="rgba(10,37,64,0.7)" />}
       {activeLayers.myLocation && <Marker coordinate={{ latitude: fisherLat, longitude: fisherLon }} title="Fishing Location" />}
       {activeLayers.pfz && (response.pfz.top_candidates || []).map((cand) => (
         <Marker
           key={cand.id || `native-cand-${cand.rank}`}
           coordinate={{ latitude: cand.coordinates.latitude, longitude: cand.coordinates.longitude }}
-          pinColor={cand.rank === 1 ? 'green' : 'gold'}
+          pinColor={cand.id === selectedPFZId ? '#FACC15' : cand.rank === 1 ? 'green' : 'gold'}
           title={`${cand.recommended ? '🥇 ' : ''}${cand.label || `PFZ ${cand.rank}`} (${cand.distance_km.toFixed(1)} km ${cand.direction})`}
           description={cand.recommendation_reason || `Coordinates: ${cand.coordinates.latitude.toFixed(3)}, ${cand.coordinates.longitude.toFixed(3)}`}
-          onPress={() => onSelectPFZ?.(cand.nearest_point || { latitude: cand.coordinates.latitude, longitude: cand.coordinates.longitude, distance_km: cand.distance_km })}
+          onPress={() => {
+            onSelectCandidate?.(cand);
+            onSelectPFZ?.(cand.nearest_point || { latitude: cand.coordinates.latitude, longitude: cand.coordinates.longitude, distance_km: cand.distance_km });
+          }}
         />
       ))}
       {activeLayers.pfz && (!response.pfz.top_candidates || response.pfz.top_candidates.length === 0) && response.pfz.nearest && (
@@ -113,8 +167,8 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({ response, activeLayer
     {!mapReady && <View style={styles.loadingOverlay}><Text style={styles.loadingText}>Loading map...</Text></View>}
     {mapReady && !features.length && <View style={styles.emptyOverlay}><Text style={styles.emptyText}>{response.pfz.message ? 'Unable to load PFZ data' : hasLivePFZ ? 'No PFZ data available' : 'Loading PFZ data...'}</Text></View>}
     <View style={styles.controlsCol}>
-      <TouchableOpacity style={styles.controlBtn} onPress={() => mapRef.current?.getCamera().then((camera) => mapRef.current?.animateCamera({ ...camera, zoom: (camera.zoom || 9) + 1 }))} accessibilityLabel="Zoom In"><Plus size={20} color={COLORS.textPrimary} /></TouchableOpacity>
-      <TouchableOpacity style={styles.controlBtn} onPress={() => mapRef.current?.getCamera().then((camera) => mapRef.current?.animateCamera({ ...camera, zoom: Math.max((camera.zoom || 9) - 1, 1) }))} accessibilityLabel="Zoom Out"><Minus size={20} color={COLORS.textPrimary} /></TouchableOpacity>
+      <TouchableOpacity style={styles.controlBtn} onPress={() => mapRef.current?.getCamera().then((camera: any) => mapRef.current?.animateCamera({ ...camera, zoom: (camera.zoom || 9) + 1 }))} accessibilityLabel="Zoom In"><Plus size={20} color={COLORS.textPrimary} /></TouchableOpacity>
+      <TouchableOpacity style={styles.controlBtn} onPress={() => mapRef.current?.getCamera().then((camera: any) => mapRef.current?.animateCamera({ ...camera, zoom: Math.max((camera.zoom || 9) - 1, 1) }))} accessibilityLabel="Zoom Out"><Minus size={20} color={COLORS.textPrimary} /></TouchableOpacity>
       <TouchableOpacity style={styles.controlBtn} onPress={recenter} accessibilityLabel="Recenter Map"><Navigation size={18} color={COLORS.oceanBlue} /></TouchableOpacity>
     </View>
   </View>;

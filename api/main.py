@@ -41,6 +41,7 @@ from agents.language import (
     detect_user_language,
     is_bhashini_configured,
     synthesize_voice_response,
+    translate_explanation_card,
     translate_response_to_language,
     translate_user_query_to_english,
 )
@@ -66,7 +67,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configurable for production environments
+    allow_origins=[
+        "http://localhost:8081",
+        "http://127.0.0.1:8081",
+        "http://localhost:19006",
+        "http://127.0.0.1:19006",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -300,12 +309,14 @@ def assess_marine_conditions(payload: OrcaAssessRequest) -> Dict[str, Any]:
                 assessment["recommendation"] = translated_rec
 
             # Translate Risk Explanation card text if present
+            re_cards = []
             if "risk_explanation" in assessment and isinstance(assessment["risk_explanation"], dict):
-                re_card = assessment["risk_explanation"]
-                if "summary" in re_card and re_card["summary"]:
-                    re_card["summary"] = translate_response_to_language(re_card["summary"], target_lang=detected_lang)
-                if "primary_watch_item" in re_card and re_card["primary_watch_item"]:
-                    re_card["primary_watch_item"] = translate_response_to_language(re_card["primary_watch_item"], target_lang=detected_lang)
+                re_cards.append(assessment["risk_explanation"])
+            if isinstance(assessment.get("risk"), dict) and isinstance(assessment["risk"].get("explanation_card"), dict):
+                re_cards.append(assessment["risk"]["explanation_card"])
+
+            for re_card in re_cards:
+                translate_explanation_card(re_card, target_lang=detected_lang)
 
         # Voice Synthesis (TTS) if requested
         if payload.generate_audio:
@@ -325,13 +336,3 @@ def assess_marine_conditions(payload: OrcaAssessRequest) -> Dict[str, Any]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while formulating the ORCA assessment: {exc}",
         )
-<<<<<<< Updated upstream
-=======
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)
-
-
->>>>>>> Stashed changes

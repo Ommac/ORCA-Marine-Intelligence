@@ -78,7 +78,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 fallback_models_env = os.getenv(
     "GEMINI_FALLBACK_MODELS",
-    "gemini-3.5-flash-lite,gemini-3.5-flash,gemini-3.7-flash,gemini-3.6-flash",
+    "gemini-3.5-flash",
 )
 GEMINI_FALLBACK_MODELS = [
     m.strip() for m in fallback_models_env.split(",") if m.strip()
@@ -87,8 +87,8 @@ GEMINI_MODELS: List[str] = list(
     dict.fromkeys([GEMINI_MODEL] + GEMINI_FALLBACK_MODELS)
 )
 
-GEMINI_RETRIES = int(os.getenv("GEMINI_RETRIES", "2"))
-GEMINI_RETRY_DELAY = float(os.getenv("GEMINI_RETRY_DELAY", "2.0"))
+GEMINI_RETRIES = int(os.getenv("GEMINI_RETRIES", "1"))
+GEMINI_RETRY_DELAY = float(os.getenv("GEMINI_RETRY_DELAY", "1.0"))
 
 gemini_client: Optional[genai.Client] = None
 if GEMINI_API_KEY:
@@ -304,6 +304,8 @@ def classify_query(query: str) -> Tuple[str, List[str], bool]:
         "hazard zones", "hazardous marine", "marine hazards", "ocean hazards",
         "restricted zone", "restricted zones", "geofence", "geofencing",
         "no-go zone", "no go zone", "no-fishing zone",
+        "check conditions", "assess conditions", "conditions for", "conditions near",
+        "marine conditions", "sea conditions", "assess marine",
     ]
     if contains_any(q, safety_and_hazard_keywords):
         return "safety_assessment", ALL_SPECIALISTS.copy(), True
@@ -748,7 +750,8 @@ def pfz_node(state: ORCAState) -> Dict[str, Any]:
 
     # 2. Live INCOIS GeoJSON WFS Fetch
     try:
-        result = find_nearest_pfz(latitude=float(lat), longitude=float(lon), rank=int(entity_rank))
+        req_rank = int(entity_rank) if entity_rank is not None and int(entity_rank) >= 1 else 1
+        result = find_nearest_pfz(latitude=float(lat), longitude=float(lon), rank=req_rank)
         if not isinstance(result, dict):
             result = {"status": "success", "data": result}
     except Exception as exc:
@@ -1721,10 +1724,10 @@ def final_response_node(state: ORCAState) -> Dict[str, Any]:
     # Determine Display Mode
     if pfz_avoid_or_hazard or intent in ["general", "emergency"] or intent == "safety_assessment":
         pfz_mode = "none"
-    elif is_single_pfz_query:
-        pfz_mode = "single_pfz"
     elif is_list_query or intent in ["pfz_query", "fishing_advice"]:
         pfz_mode = "pfz_list"
+    elif is_single_pfz_query:
+        pfz_mode = "single_pfz"
     else:
         pfz_mode = "none"
 
@@ -1822,9 +1825,9 @@ def final_response_node(state: ORCAState) -> Dict[str, Any]:
 
     final_dict.update(specialist_results)
 
-    # Attach top_candidates to pfz block only if relevant
+    # Attach top_candidates to pfz block (always provide top 3 candidates for map/assessment consistency)
     if "pfz" in final_dict and isinstance(final_dict["pfz"], dict) and all_candidates:
-        final_dict["pfz"]["top_candidates"] = top_candidates if display_flags["pfz"] else all_candidates
+        final_dict["pfz"]["top_candidates"] = all_candidates[:3]
 
     alerts = generate_deterministic_alerts(state, specialist_results, risk_result)
     final_dict["alerts"] = alerts

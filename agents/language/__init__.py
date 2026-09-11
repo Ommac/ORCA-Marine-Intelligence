@@ -10,6 +10,7 @@ from agents.language.bhashini_client import (
     bhashini_client,
     detect_user_language,
     synthesize_voice_response,
+    translate_explanation_card,
     translate_response_to_language,
     translate_user_query_to_english,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "detect_user_language",
     "translate_user_query_to_english",
     "translate_response_to_language",
+    "translate_explanation_card",
     "synthesize_voice_response",
     "is_bhashini_configured",
     "SUPPORTED_LANGUAGES",
