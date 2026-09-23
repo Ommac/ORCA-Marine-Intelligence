@@ -1,0 +1,31 @@
+{
+  "type": "FeatureCollection",
+  "name": "Dummy_Marine_Protected_Areas",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "dummy-mpa-001",
+      "properties": {
+        "id": "dummy-mpa-001",
+        "name": "Dummy Marine Protected Test Area",
+        "category": "mpa",
+        "category_label": "Dummy Marine Protected Area",
+        "restriction_level": "PROTECTED",
+        "description": "Artificial marine protected polygon for testing conservation zones.",
+        "dataset_type": "DUMMY"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [72.30, 19.40],
+            [72.50, 19.40],
+            [72.50, 19.60],
+            [72.30, 19.60],
+            [72.30, 19.40]
+          ]
+        ]
+      }
+    }
+  ]
+}

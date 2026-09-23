@@ -1,0 +1,31 @@
+{
+  "type": "FeatureCollection",
+  "name": "Dummy_Ecologically_Sensitive_Zones",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "dummy-esz-001",
+      "properties": {
+        "id": "dummy-esz-001",
+        "name": "Dummy Ecologically Sensitive Test Zone",
+        "category": "ecologically_sensitive",
+        "category_label": "Dummy Ecologically Sensitive Zone",
+        "restriction_level": "SENSITIVE",
+        "description": "Artificial ecologically sensitive zone polygon for testing environmental constraints.",
+        "dataset_type": "DUMMY"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [72.40, 19.80],
+            [72.60, 19.80],
+            [72.60, 20.00],
+            [72.40, 20.00],
+            [72.40, 19.80]
+          ]
+        ]
+      }
+    }
+  ]
+}

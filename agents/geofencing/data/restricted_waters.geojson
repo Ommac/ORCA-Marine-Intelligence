@@ -1,0 +1,31 @@
+{
+  "type": "FeatureCollection",
+  "name": "Dummy_Restricted_Waters",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "dummy-restricted-001",
+      "properties": {
+        "id": "dummy-restricted-001",
+        "name": "Dummy Restricted Test Zone",
+        "category": "restricted_waters",
+        "category_label": "Dummy Restricted Waters",
+        "restriction_level": "RESTRICTED",
+        "description": "Artificial restricted polygon used for routing tests.",
+        "dataset_type": "DUMMY"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [72.60, 18.95],
+            [72.80, 18.95],
+            [72.80, 19.15],
+            [72.60, 19.15],
+            [72.60, 18.95]
+          ]
+        ]
+      }
+    }
+  ]
+}

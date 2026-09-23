@@ -2,18 +2,22 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import MapView, { Callout, Circle, Marker, Polygon, Polyline, Region } from 'react-native-maps';
 import { Minus, Navigation, Plus } from 'lucide-react-native';
-import { OrcaResponse, PFZNearest, PFZCandidate } from '../../types/orca';
+import { OrcaResponse, PFZNearest, PFZCandidate, GeofenceFeature } from '../../types/orca';
 import { NormalizedPFZFeature, PFZLatLng, calculatePFZBounds, normalizePFZFeatures } from '../../utils/pfzGeometry';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
+import { getGeofences } from '../../services/api';
 
 export interface MapViewProps {
   response: OrcaResponse;
-  activeLayers?: { pfz: boolean; myLocation: boolean; distance: boolean };
+  activeLayers?: { pfz?: boolean; myLocation?: boolean; distance?: boolean; geofences?: boolean; route?: boolean };
   selectedPFZId?: string | null;
+  optimizedRoute?: [number, number][];
   onSelectPFZ?: (nearest?: PFZNearest) => void;
   onSelectCandidate?: (candidate: PFZCandidate) => void;
   onViewDetails?: () => void;
 }
+
+
 
 function PFZCallout({ properties }: { properties: Record<string, unknown> }) {
   const findValue = (...keys: string[]) => keys.map((key) => properties[key]).find((value) => value !== undefined && value !== null && value !== '');
@@ -60,6 +64,59 @@ function PFZFeatureLayer({ feature }: { feature: NormalizedPFZFeature }) {
   return <>{geometry.coordinates.map((point, index) => <Marker key={`${feature.id}-point-${index}`} coordinate={{ latitude: point[0], longitude: point[1] }}><PFZCallout properties={properties} /></Marker>)}</>;
 }
 
+function getGeofenceNativeStyle(category: string) {
+  switch (category) {
+    case 'eez':
+      return { strokeColor: '#EF4444', fillColor: 'rgba(239,68,68,0.1)', strokeWidth: 2 };
+    case 'restricted_waters':
+      return { strokeColor: '#F97316', fillColor: 'rgba(249,115,22,0.25)', strokeWidth: 2.5 };
+    case 'mpa':
+      return { strokeColor: '#10B981', fillColor: 'rgba(16,185,129,0.25)', strokeWidth: 2.5 };
+    case 'ecologically_sensitive':
+      return { strokeColor: '#8B5CF6', fillColor: 'rgba(139,92,246,0.25)', strokeWidth: 2.5 };
+    default:
+      return { strokeColor: '#94A3B8', fillColor: 'rgba(148,163,184,0.2)', strokeWidth: 2 };
+  }
+}
+
+function NativeGeofenceLayer({ feature }: { feature: GeofenceFeature }) {
+  const { geometry, properties } = feature;
+  const style = getGeofenceNativeStyle(properties?.category || '');
+  if (geometry.type === 'Polygon' && Array.isArray(geometry.coordinates)) {
+    const coordinates = geometry.coordinates[0].map(([longitude, latitude]: [number, number]) => ({ latitude, longitude }));
+    return (
+      <Polygon
+        coordinates={coordinates}
+        strokeColor={style.strokeColor}
+        fillColor={style.fillColor}
+        strokeWidth={style.strokeWidth}
+        tappable
+      />
+    );
+  }
+  if (geometry.type === 'MultiPolygon' && Array.isArray(geometry.coordinates)) {
+    return (
+      <>
+        {geometry.coordinates.map((poly: any, index: number) => {
+          const coordinates = poly[0].map(([longitude, latitude]: [number, number]) => ({ latitude, longitude }));
+          return (
+            <Polygon
+              key={`${feature.id || 'gf'}-${index}`}
+              coordinates={coordinates}
+              strokeColor={style.strokeColor}
+              fillColor={style.fillColor}
+              strokeWidth={style.strokeWidth}
+              tappable
+            />
+          );
+        })}
+      </>
+    );
+  }
+  return null;
+}
+
+
 function featureCoordinates(features: NormalizedPFZFeature[]): PFZLatLng[] {
   const positions: PFZLatLng[] = [];
   features.forEach(({ geometry }) => {
@@ -76,11 +133,31 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
   response,
   activeLayers = { pfz: true, myLocation: true, distance: true },
   selectedPFZId,
+  optimizedRoute,
   onSelectPFZ,
   onSelectCandidate,
 }) => {
   const mapRef = useRef<any>(null);
+
   const [mapReady, setMapReady] = useState(false);
+  const [geofences, setGeofences] = useState<GeofenceFeature[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    getGeofences()
+      .then((collection) => {
+        if (isMounted && collection?.features) {
+          setGeofences(collection.features);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to load geofences in native map:', err);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const fisherLat = response.request?.latitude ?? 0;
   const fisherLon = response.request?.longitude ?? 0;
   const topCandidates: PFZCandidate[] = useMemo(
@@ -130,11 +207,30 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
   const center: Region = { latitude: fisherLat, longitude: fisherLon, latitudeDelta: 4, longitudeDelta: 4 };
 
   useEffect(() => {
-    const coordinates = featureCoordinates(features);
-    if (mapRef.current && coordinates.length) mapRef.current.fitToCoordinates(coordinates.map(([latitude, longitude]) => ({ latitude, longitude })), { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: true });
-  }, [features, bounds]);
+    if (optimizedRoute && optimizedRoute.length >= 2 && mapRef.current) {
+      mapRef.current.fitToCoordinates(
+        optimizedRoute.map(([latitude, longitude]) => ({ latitude, longitude })),
+        { edgePadding: { top: 50, right: 50, bottom: 50, left: 50 }, animated: true }
+      );
+    } else {
+      const coordinates = featureCoordinates(features);
+      if (mapRef.current && coordinates.length) {
+        mapRef.current.fitToCoordinates(
+          coordinates.map(([latitude, longitude]) => ({ latitude, longitude })),
+          { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: true }
+        );
+      }
+    }
+  }, [features, bounds, optimizedRoute]);
 
   const recenter = () => {
+    if (optimizedRoute && optimizedRoute.length >= 2 && mapRef.current) {
+      mapRef.current.fitToCoordinates(
+        optimizedRoute.map(([latitude, longitude]) => ({ latitude, longitude })),
+        { edgePadding: { top: 50, right: 50, bottom: 50, left: 50 }, animated: true }
+      );
+      return;
+    }
     const coordinates = featureCoordinates(features);
     if (mapRef.current && coordinates.length) mapRef.current.fitToCoordinates(coordinates.map(([latitude, longitude]) => ({ latitude, longitude })), { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: true });
     else mapRef.current?.animateToRegion(center, 600);
@@ -142,11 +238,42 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
 
   return <View style={styles.container}>
     <MapView ref={mapRef} style={styles.fullMap} mapType="satellite" initialRegion={center} onMapReady={() => setMapReady(true)}>
+      {/* Dummy Geofencing Overlays (Phase 1) */}
+      {(activeLayers.geofences ?? true) && geofences.map((gf) => (
+        <NativeGeofenceLayer key={gf.id || `native-geofence-${gf.properties?.id || Math.random()}`} feature={gf} />
+      ))}
+
       {activeLayers.pfz && features.map((feature) => (
         <PFZFeatureLayer key={`${activeSelectedCandidate?.id || 'pfz'}-${feature.id}`} feature={feature} />
       ))}
       {activeLayers.myLocation && <Circle center={{ latitude: fisherLat, longitude: fisherLon }} radius={500} strokeColor="#38BDF8" fillColor="rgba(10,37,64,0.7)" />}
       {activeLayers.myLocation && <Marker coordinate={{ latitude: fisherLat, longitude: fisherLon }} title="Fishing Location" />}
+
+      {/* Phase 3 Optimized A* Route Overlay & Markers */}
+      {(activeLayers.route ?? true) && optimizedRoute && optimizedRoute.length >= 2 && (
+        <>
+          <Polyline
+            coordinates={optimizedRoute.map(([latitude, longitude]) => ({ latitude, longitude }))}
+            strokeColor="#F59E0B"
+            strokeWidth={4.5}
+          />
+          <Marker
+            coordinate={{ latitude: optimizedRoute[0][0], longitude: optimizedRoute[0][1] }}
+            pinColor="green"
+            title="📍 Route Start"
+            description={`Coordinates: ${optimizedRoute[0][0].toFixed(3)}, ${optimizedRoute[0][1].toFixed(3)}`}
+          />
+          <Marker
+            coordinate={{ latitude: optimizedRoute[optimizedRoute.length - 1][0], longitude: optimizedRoute[optimizedRoute.length - 1][1] }}
+            pinColor="red"
+            title="🎯 Route Destination"
+            description={`Coordinates: ${optimizedRoute[optimizedRoute.length - 1][0].toFixed(3)}, ${optimizedRoute[optimizedRoute.length - 1][1].toFixed(3)}`}
+          />
+        </>
+      )}
+
+
+
       {activeLayers.pfz && (response.pfz.top_candidates || []).map((cand) => (
         <Marker
           key={cand.id || `native-cand-${cand.rank}`}

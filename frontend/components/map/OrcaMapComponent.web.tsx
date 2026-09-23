@@ -13,7 +13,7 @@ import {
   TileLayer,
   useMap,
 } from 'react-leaflet';
-import { OrcaResponse, PFZNearest, PFZCandidate } from '../../types/orca';
+import { OrcaResponse, PFZNearest, PFZCandidate, GeofenceFeature, GeofenceCollection } from '../../types/orca';
 import { computeBoundingBox, createDistanceLine } from '../../utils/mapAdapters';
 import {
   calculatePFZBounds,
@@ -24,15 +24,19 @@ import {
 import { ARCGIS_SATELLITE_ATTRIBUTION, ARCGIS_SATELLITE_TILE_URL } from '../../constants/map';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
 import { subscribeToMapFocus, MapFocusTarget } from '../../services/mapFocusStore';
+import { getGeofences } from '../../services/api';
 
 export interface MapViewProps {
   response: OrcaResponse;
-  activeLayers?: { pfz: boolean; myLocation: boolean; distance: boolean };
+  activeLayers?: { pfz?: boolean; myLocation?: boolean; distance?: boolean; geofences?: boolean; route?: boolean };
   selectedPFZId?: string | null;
+  optimizedRoute?: [number, number][];
   onSelectPFZ?: (nearest?: PFZNearest) => void;
   onSelectCandidate?: (candidate: PFZCandidate) => void;
   onViewDetails?: () => void;
 }
+
+
 
 const arrowIcon = (rotation: number) => L.divIcon({
   className: 'orca-pfz-direction-arrow',
@@ -92,7 +96,105 @@ function PFZFeatureLayer({ feature }: { feature: NormalizedPFZFeature }) {
   return <>{geometry.coordinates.map((point, index) => <CircleMarker key={`${feature.id}-point-${index}`} center={point} radius={6} pathOptions={{ color: '#FDE047', fillColor: '#10B981', fillOpacity: 1 }}><PFZPopup properties={properties} /></CircleMarker>)}</>;
 }
 
+function getGeofenceStyle(category: string) {
+  switch (category) {
+    case 'eez':
+      return {
+        color: '#EF4444',
+        fillColor: '#EF4444',
+        fillOpacity: 0.08,
+        weight: 2,
+        dashArray: '6 6',
+      };
+    case 'restricted_waters':
+      return {
+        color: '#F97316',
+        fillColor: '#F97316',
+        fillOpacity: 0.25,
+        weight: 2.5,
+      };
+    case 'mpa':
+      return {
+        color: '#10B981',
+        fillColor: '#10B981',
+        fillOpacity: 0.25,
+        weight: 2.5,
+      };
+    case 'ecologically_sensitive':
+      return {
+        color: '#8B5CF6',
+        fillColor: '#8B5CF6',
+        fillOpacity: 0.25,
+        weight: 2.5,
+      };
+    default:
+      return {
+        color: '#94A3B8',
+        fillColor: '#94A3B8',
+        fillOpacity: 0.2,
+        weight: 2,
+      };
+  }
+}
+
+function GeofencePopup({ feature }: { feature: GeofenceFeature }) {
+  const props = feature.properties || ({} as any);
+  const style = getGeofenceStyle(props.category);
+  return (
+    <Popup>
+      <div style={{ minWidth: 200, fontFamily: 'sans-serif' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4, gap: 6 }}>
+          <strong style={{ fontSize: 13, color: '#0F172A' }}>{props.name}</strong>
+          <span style={{ fontSize: 9, fontWeight: 800, color: '#EF4444', backgroundColor: '#FEE2E2', padding: '2px 5px', borderRadius: 4 }}>
+            DUMMY TEST DATA
+          </span>
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: style.color, marginBottom: 4 }}>
+          {props.category_label || props.category} ({props.restriction_level})
+        </div>
+        {props.description ? (
+          <div style={{ fontSize: 11, color: '#475569', lineHeight: 1.3 }}>
+            {props.description}
+          </div>
+        ) : null}
+      </div>
+    </Popup>
+  );
+}
+
+function GeofenceFeatureLayer({ feature }: { feature: GeofenceFeature }) {
+  const { geometry, properties } = feature;
+  const style = getGeofenceStyle(properties?.category || '');
+
+  if (geometry?.type === 'Polygon' && Array.isArray(geometry.coordinates)) {
+    const latLngs: PFZLatLng[] = geometry.coordinates[0].map(([lon, lat]: [number, number]) => [lat, lon] as PFZLatLng);
+    return (
+      <Polygon positions={latLngs} pathOptions={style}>
+        <GeofencePopup feature={feature} />
+      </Polygon>
+    );
+  }
+
+  if (geometry?.type === 'MultiPolygon' && Array.isArray(geometry.coordinates)) {
+    return (
+      <>
+        {geometry.coordinates.map((poly: any, idx: number) => {
+          const latLngs: PFZLatLng[] = poly[0].map(([lon, lat]: [number, number]) => [lat, lon] as PFZLatLng);
+          return (
+            <Polygon key={`${feature.id || 'gf'}-${idx}`} positions={latLngs} pathOptions={style}>
+              <GeofencePopup feature={feature} />
+            </Polygon>
+          );
+        })}
+      </>
+    );
+  }
+
+  return null;
+}
+
 function MapCamera({
+
   bounds,
   fallback,
   focusTarget,
@@ -101,7 +203,7 @@ function MapCamera({
   bounds: [PFZLatLng, PFZLatLng] | null;
   fallback: PFZLatLng;
   focusTarget: MapFocusTarget | null;
-  onReady: (map: L.Map) => void;
+  onReady: (map: any) => void;
 }) {
   const map = useMap();
   useEffect(() => {
@@ -125,16 +227,38 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
   response,
   activeLayers = { pfz: true, myLocation: true, distance: true },
   selectedPFZId,
+  optimizedRoute,
   onSelectCandidate,
   onViewDetails,
 }) => {
-  const mapRef = useRef<L.Map | null>(null);
+  const mapRef = useRef<any>(null);
+
+
   const [mapReady, setMapReady] = useState(false);
   const [focusTarget, setFocusTarget] = useState<MapFocusTarget | null>(null);
+  const [geofences, setGeofences] = useState<GeofenceFeature[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    getGeofences()
+      .then((collection) => {
+        if (isMounted && collection?.features) {
+          setGeofences(collection.features);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to load geofences in map:', err);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const fisherLat = response.request?.latitude ?? 0;
   const fisherLon = response.request?.longitude ?? 0;
   const nearest = response.pfz.nearest;
   const fallback: PFZLatLng = [fisherLat, fisherLon];
+
 
   const topCandidates: PFZCandidate[] = useMemo(
     () => (response.pfz.top_candidates || response.top_pfz || focusTarget?.top_candidates || []) as PFZCandidate[],
@@ -190,6 +314,17 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
     [activePFZGeometry, activePFZMetadata]
   );
   const bounds = useMemo(() => calculatePFZBounds(features), [features]);
+
+  const routeBounds = useMemo(() => {
+    if (!optimizedRoute || optimizedRoute.length < 2) return null;
+    const lats = optimizedRoute.map((p) => p[0]);
+    const lons = optimizedRoute.map((p) => p[1]);
+    return [
+      [Math.min(...lats), Math.min(...lons)],
+      [Math.max(...lats), Math.max(...lons)],
+    ] as [PFZLatLng, PFZLatLng];
+  }, [optimizedRoute]);
+
 
   const targetPointForRoute = useMemo(() => {
     if (activeSelectedCandidate) {
@@ -249,16 +384,63 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
       <MapContainer center={fallback} zoom={9} style={styles.map}>
         <TileLayer url={ARCGIS_SATELLITE_TILE_URL} attribution={ARCGIS_SATELLITE_ATTRIBUTION} />
         <MapCamera
-          bounds={bounds}
+          bounds={routeBounds || bounds}
           fallback={fallback}
           focusTarget={focusTarget}
           onReady={(map) => { mapRef.current = map; setMapReady(true); }}
         />
+        {/* Dummy Geofencing Overlays (Phase 1) */}
+        {(activeLayers.geofences ?? true) && geofences.map((gf) => (
+          <GeofenceFeatureLayer key={gf.id || `geofence-${gf.properties?.id || Math.random()}`} feature={gf} />
+        ))}
+
         {activeLayers.pfz && features.map((feature) => (
           <PFZFeatureLayer key={`${activeSelectedCandidate?.id || 'pfz'}-${feature.id}`} feature={feature} />
         ))}
         {activeLayers.myLocation && <CircleMarker center={fallback} radius={8} pathOptions={{ color: '#38BDF8', fillColor: '#0A2540', fillOpacity: 1 }}><Popup><strong>Fishing Location</strong></Popup></CircleMarker>}
         {activeLayers.distance && distanceLine && <Polyline positions={distanceLine.features[0].geometry.coordinates.map(([longitude, latitude]: [number, number]) => [latitude, longitude] as PFZLatLng)} pathOptions={{ color: '#38BDF8', weight: 3, dashArray: '8 8' }} />}
+
+        {/* Phase 3 Optimized A* Route Overlay & Markers */}
+        {(activeLayers.route ?? true) && optimizedRoute && optimizedRoute.length >= 2 && (
+          <>
+            <Polyline
+              positions={optimizedRoute as PFZLatLng[]}
+              pathOptions={{ color: '#F59E0B', weight: 4.5, opacity: 0.95 }}
+            >
+              <Popup>
+                <div style={{ fontFamily: 'sans-serif' }}>
+                  <strong>⚡ A* Optimized Safe Route</strong>
+                  <div style={{ fontSize: 11, color: '#16A34A', fontWeight: 'bold', marginTop: 2 }}>
+                    Hard Geofence Avoidance Active
+                  </div>
+                </div>
+              </Popup>
+            </Polyline>
+            <CircleMarker
+              center={optimizedRoute[0]}
+              radius={8}
+              pathOptions={{ color: '#10B981', fillColor: '#064E3B', fillOpacity: 1, weight: 3 }}
+            >
+              <Popup>
+                <strong>📍 Route Start</strong>
+                <div>Lat: {optimizedRoute[0][0].toFixed(4)}°, Lon: {optimizedRoute[0][1].toFixed(4)}°</div>
+              </Popup>
+            </CircleMarker>
+            <CircleMarker
+              center={optimizedRoute[optimizedRoute.length - 1]}
+              radius={8}
+              pathOptions={{ color: '#EF4444', fillColor: '#991B1B', fillOpacity: 1, weight: 3 }}
+            >
+              <Popup>
+                <strong>🎯 Route Destination</strong>
+                <div>Lat: {optimizedRoute[optimizedRoute.length - 1][0].toFixed(4)}°, Lon: {optimizedRoute[optimizedRoute.length - 1][1].toFixed(4)}°</div>
+              </Popup>
+            </CircleMarker>
+          </>
+        )}
+
+
+
 
         {/* Multi-Candidate Top PFZ Markers */}
         {topCandidates.map((cand: PFZCandidate) => {

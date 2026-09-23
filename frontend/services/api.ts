@@ -5,8 +5,22 @@
  * Consumes and returns strictly normalized OrcaResponse objects from the live ORCA backend.
  */
 
-import { OrcaRequest, OrcaResponse, AssessmentStatus, SeverityLevel, Hazard, Alert } from '../types/orca';
+import {
+  OrcaRequest,
+  OrcaResponse,
+  AssessmentStatus,
+  SeverityLevel,
+  Hazard,
+  Alert,
+  GeofenceCollection,
+  GeofencePointCheckResult,
+  GeofenceRouteCheckResult,
+  RouteOptimizeRequest,
+  RouteOptimizeResult,
+} from '../types/orca';
+
 import { getMockResponseForRequest, MOCK_PALGHAR_RESPONSE } from '../mocks/orcaResponse';
+
 import { getActiveTrip, getTodayDateISO, setActiveLocation, setActiveDate, setActiveBoatWidth } from './tripStore';
 
 // Configuration Flag: Set to false for live backend API calls (POST /api/orca/assess)
@@ -510,5 +524,149 @@ export async function synthesizeSpeech(text: string, language: string = 'mr'): P
     return null;
   }
 }
+
+/**
+ * Fetch dummy maritime geofences (Phase 1)
+ */
+export async function getGeofences(category?: string): Promise<GeofenceCollection> {
+  try {
+    const url = new URL(`${getBaseUrl()}/api/orca/geofences`);
+    if (category) {
+      url.searchParams.set('category', category);
+    }
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to load geofences: HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err) {
+    console.warn('getGeofences failed:', err);
+    return {
+      type: 'FeatureCollection',
+      name: 'ORCA_Dummy_Geofences_Fallback',
+      features: [],
+      metadata: {
+        total_features: 0,
+        dataset_type: 'DUMMY',
+      },
+    };
+  }
+}
+
+/**
+ * Check vessel point geofence spatial status (Phase 2)
+ */
+export async function checkGeofencePoint(
+  latitude: number,
+  longitude: number,
+  warningDistanceKm: number = 5.0
+): Promise<GeofencePointCheckResult> {
+  try {
+    const url = new URL(`${getBaseUrl()}/api/orca/geofences/check`);
+    url.searchParams.set('latitude', String(latitude));
+    url.searchParams.set('longitude', String(longitude));
+    url.searchParams.set('warning_distance_km', String(warningDistanceKm));
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to check geofence point: HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err) {
+    console.warn('checkGeofencePoint failed:', err);
+    return {
+      status: 'SAFE',
+      latitude,
+      longitude,
+      warning_distance_km: warningDistanceKm,
+      nearest_boundary_distance_km: 999.0,
+      nearest_category: 'none',
+      details: [],
+    };
+  }
+}
+
+/**
+ * Check route segment intersection against geofences (Phase 2)
+ */
+export async function checkGeofenceRoute(
+  start: [number, number],
+  end: [number, number]
+): Promise<GeofenceRouteCheckResult> {
+  try {
+    const res = await fetch(`${getBaseUrl()}/api/orca/geofences/route-check`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        start,
+        end,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to check geofence route: HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err) {
+    console.warn('checkGeofenceRoute failed:', err);
+    return {
+      intersects: false,
+      blocked: false,
+      start: { latitude: start[0], longitude: start[1] },
+      end: { latitude: end[0], longitude: end[1] },
+      intersections: [],
+    };
+  }
+}
+
+/**
+ * Optimize geographic route avoiding hard-restricted geofences using A* (Phase 3)
+ */
+export async function optimizeRoute(
+  start: [number, number],
+  destination: [number, number],
+  gridSpacingKm: number = 2.0,
+  searchMarginKm: number = 15.0
+): Promise<RouteOptimizeResult> {
+  try {
+    const res = await fetch(`${getBaseUrl()}/api/orca/route/optimize`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        start,
+        destination,
+        grid_spacing_km: gridSpacingKm,
+        search_margin_km: searchMarginKm,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to optimize route: HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err: any) {
+    console.warn('optimizeRoute failed:', err);
+    return {
+      success: false,
+      route: [],
+      total_distance_km: null,
+      nodes_explored: 0,
+      algorithm: 'A*',
+      reason: err?.message || 'Route optimization network request failed',
+    };
+  }
+}
+
+
+
 
 

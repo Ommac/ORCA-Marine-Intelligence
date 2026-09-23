@@ -1,0 +1,31 @@
+{
+  "type": "FeatureCollection",
+  "name": "Dummy_EEZ_India",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "dummy-eez-001",
+      "properties": {
+        "id": "dummy-eez-001",
+        "name": "Dummy Indian EEZ Test Boundary",
+        "category": "eez",
+        "category_label": "Dummy EEZ Boundary",
+        "restriction_level": "BOUNDARY",
+        "description": "Artificial test geometry for ORCA development.",
+        "dataset_type": "DUMMY"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [68.0, 15.0],
+            [74.0, 15.0],
+            [74.0, 22.0],
+            [68.0, 22.0],
+            [68.0, 15.0]
+          ]
+        ]
+      }
+    }
+  ]
+}

@@ -319,3 +319,103 @@ export interface LightningData {
   reason?: string;
 }
 
+export type GeofenceCategory = "eez" | "restricted_waters" | "mpa" | "ecologically_sensitive";
+export type GeofenceRestrictionLevel = "BOUNDARY" | "RESTRICTED" | "PROTECTED" | "SENSITIVE";
+
+export interface GeofenceProperties {
+  id: string;
+  name: string;
+  category: GeofenceCategory | string;
+  category_label: string;
+  restriction_level: GeofenceRestrictionLevel | string;
+  description?: string;
+  dataset_type?: string;
+  [key: string]: any;
+}
+
+export interface GeofenceFeature {
+  type: "Feature";
+  id?: string;
+  properties: GeofenceProperties;
+  geometry: {
+    type: "Polygon" | "MultiPolygon" | string;
+    coordinates: any;
+  };
+}
+
+export interface GeofenceCollection {
+  type: "FeatureCollection";
+  name?: string;
+  features: GeofenceFeature[];
+  metadata?: {
+    total_features: number;
+    dataset_type: string;
+    categories?: string[];
+    category_filter?: string;
+  };
+}
+
+export type GeofenceSpatialStatus = "SAFE" | "WARNING" | "RESTRICTED";
+
+export interface GeofencePointDetail {
+  id: string;
+  name: string;
+  category: GeofenceCategory | string;
+  category_label: string;
+  restriction_level: GeofenceRestrictionLevel | string;
+  is_inside: boolean;
+  is_restricted: boolean;
+  distance_to_boundary_km: number;
+}
+
+export interface GeofencePointCheckResult {
+  status: GeofenceSpatialStatus;
+  latitude: number;
+  longitude: number;
+  warning_distance_km: number;
+  nearest_boundary_distance_km: number;
+  nearest_category: string;
+  details: GeofencePointDetail[];
+}
+
+export interface GeofenceRouteIntersection {
+  id: string;
+  category: GeofenceCategory | string;
+  name: string;
+  restriction_level: GeofenceRestrictionLevel | string;
+  restricted: boolean;
+}
+
+export interface GeofenceRouteCheckResult {
+  intersects: boolean;
+  blocked: boolean;
+  start: {
+    latitude: number;
+    longitude: number;
+  };
+  end: {
+    latitude: number;
+    longitude: number;
+  };
+  intersections: GeofenceRouteIntersection[];
+}
+
+export interface RouteOptimizeRequest {
+  start: [number, number]; // [latitude, longitude]
+  destination: [number, number]; // [latitude, longitude]
+  grid_spacing_km?: number;
+  search_margin_km?: number;
+}
+
+export interface RouteOptimizeResult {
+  success: boolean;
+  route: [number, number][]; // Array of [latitude, longitude]
+  total_distance_km: number | null;
+  nodes_explored: number;
+  algorithm: string;
+  reason?: string;
+}
+
+
+
+

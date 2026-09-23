@@ -47,6 +47,13 @@ from agents.language import (
 )
 from agents.language.config import SUPPORTED_LANGUAGES, get_language_name
 from agents.orchestrator.main import orchestrate_orca_assessment
+from agents.geofencing import (
+    load_all_geofences,
+    check_point_spatial_status,
+    check_route_segment_intersection,
+    optimize_route,
+)
+
 
 # ---------------------------------------------------------------------------
 # Logging & FastAPI App Configuration
@@ -336,3 +343,123 @@ def assess_marine_conditions(payload: OrcaAssessRequest) -> Dict[str, Any]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while formulating the ORCA assessment: {exc}",
         )
+
+
+@app.get(
+    "/api/orca/geofences",
+    summary="Get Dummy Maritime Geofences (Phase 1)",
+    description="Returns dummy maritime boundaries, restricted waters, MPAs, and ecologically sensitive zones as a GeoJSON FeatureCollection.",
+    tags=["Geofencing"],
+)
+def get_geofences(
+    category: Optional[str] = None,
+    force_reload: bool = False,
+) -> Dict[str, Any]:
+    """Retrieve dummy geofence FeatureCollection, optionally filtered by category."""
+    try:
+        return load_all_geofences(force_reload=force_reload, category=category)
+    except Exception as exc:
+        logger.error(f"Failed to load geofences: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve geofences: {exc}",
+        )
+
+
+class OrcaRouteCheckRequest(BaseModel):
+    """Pydantic model for route segment intersection checking."""
+    start: list[float] = Field(..., min_items=2, max_items=2, description="Start point [latitude, longitude].")
+    end: list[float] = Field(..., min_items=2, max_items=2, description="End point [latitude, longitude].")
+
+
+@app.get(
+    "/api/orca/geofences/check",
+    summary="Check Vessel Point Spatial Status (Phase 2)",
+    description="Evaluates whether a point is SAFE, WARNING, or RESTRICTED and computes boundary distance.",
+    tags=["Geofencing"],
+)
+def check_geofence_point(
+    latitude: float,
+    longitude: float,
+    warning_distance_km: float = 5.0,
+) -> Dict[str, Any]:
+    """Check spatial status and nearest boundary distance for a given coordinate."""
+    try:
+        return check_point_spatial_status(
+            latitude=latitude,
+            longitude=longitude,
+            warning_distance_km=warning_distance_km,
+        )
+    except Exception as exc:
+        logger.error(f"Point geofence check failed for ({latitude}, {longitude}): {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check geofence point status: {exc}",
+        )
+
+
+@app.post(
+    "/api/orca/geofences/route-check",
+    summary="Check Route Segment Intersection (Phase 2)",
+    description="Checks whether a route segment between start [lat, lon] and end [lat, lon] intersects geofences.",
+    tags=["Geofencing"],
+)
+def check_geofence_route(
+    payload: OrcaRouteCheckRequest,
+) -> Dict[str, Any]:
+    """Check whether a line between start and end coordinates crosses geofences."""
+    try:
+        start_lat, start_lon = payload.start[0], payload.start[1]
+        end_lat, end_lon = payload.end[0], payload.end[1]
+        return check_route_segment_intersection(
+            start_latitude=start_lat,
+            start_longitude=start_lon,
+            end_latitude=end_lat,
+            end_longitude=end_lon,
+        )
+    except Exception as exc:
+        logger.error(f"Route geofence check failed for {payload}: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check route geofence intersection: {exc}",
+        )
+
+
+class OrcaRouteOptimizeRequest(BaseModel):
+    """Pydantic model for A* route optimization requests."""
+    start: list[float] = Field(..., min_items=2, max_items=2, description="Start coordinate [latitude, longitude].")
+    destination: list[float] = Field(..., min_items=2, max_items=2, description="Destination coordinate [latitude, longitude].")
+    grid_spacing_km: Optional[float] = Field(2.0, description="Grid resolution in kilometers.")
+    search_margin_km: Optional[float] = Field(15.0, description="Bounding search margin in kilometers.")
+
+
+@app.post(
+    "/api/orca/route/optimize",
+    summary="Optimize Route with Hard Geofence Avoidance (Phase 3)",
+    description="Calculates the shortest safe A* path between start and destination while avoiding hard-restricted geofences.",
+    tags=["Geofencing"],
+)
+def optimize_marine_route(
+    payload: OrcaRouteOptimizeRequest,
+) -> Dict[str, Any]:
+    """Calculate an A* path avoiding restricted geofences."""
+    try:
+        start_lat, start_lon = payload.start[0], payload.start[1]
+        dest_lat, dest_lon = payload.destination[0], payload.destination[1]
+        return optimize_route(
+            start_latitude=start_lat,
+            start_longitude=start_lon,
+            destination_latitude=dest_lat,
+            destination_longitude=dest_lon,
+            grid_spacing_km=payload.grid_spacing_km or 2.0,
+            search_margin_km=payload.search_margin_km or 15.0,
+        )
+    except Exception as exc:
+        logger.error(f"Route optimization failed for {payload}: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to optimize route: {exc}",
+        )
+
+
+

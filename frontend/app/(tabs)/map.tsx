@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MapPin, Compass, Navigation, ArrowUpRight, Radio } from 'lucide-react-native';
+import { MapPin, Compass, Navigation, ArrowUpRight, Radio, Zap, ShieldCheck, AlertCircle, RefreshCw, X } from 'lucide-react-native';
 import { OrcaHeader } from '../../components/OrcaHeader';
 import { OrcaMapView } from '../../components/MapView';
 import { MapLegend, ActiveMapLayers } from '../../components/MapLegend';
@@ -16,10 +16,11 @@ import {
   setSelectedPFZId,
   getSelectedPFZId,
   subscribeToSelectedPFZ,
+  optimizeRoute,
 } from '../../services/api';
 import { setMapFocus } from '../../services/mapFocusStore';
 import { getActiveTrip, subscribeToTrip } from '../../services/tripStore';
-import { OrcaResponse, PFZCandidate } from '../../types/orca';
+import { OrcaResponse, PFZCandidate, RouteOptimizeResult } from '../../types/orca';
 import { COLORS, TYPOGRAPHY, SPACING, RADIUS, SHADOWS } from '../../constants/theme';
 import { formatDistanceKm } from '../../utils/formatting';
 
@@ -32,7 +33,15 @@ export default function MapScreen() {
     pfz: true,
     myLocation: true,
     distance: true,
+    geofences: true,
+    route: true,
   });
+
+  const [optimizedRouteData, setOptimizedRouteData] = useState<RouteOptimizeResult | null>(null);
+  const [isOptimizing, setIsOptimizing] = useState(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
+
+
 
   useEffect(() => {
     const unsubTrip = subscribeToTrip((trip) => {
@@ -88,6 +97,31 @@ export default function MapScreen() {
     } else {
       router.push('/assessment');
     }
+  };
+
+  const handleRunAStarOptimization = async () => {
+    setIsOptimizing(true);
+    setRouteError(null);
+    try {
+      // Demonstration test coordinates that go around the dummy restricted waters polygon [72.60-72.80, 18.95-19.15]
+      const startCoord: [number, number] = [18.80, 72.70];
+      const destCoord: [number, number] = [19.30, 72.70];
+      const result = await optimizeRoute(startCoord, destCoord, 2.0, 15.0);
+      if (result.success && result.route.length > 0) {
+        setOptimizedRouteData(result);
+      } else {
+        setRouteError(result.reason || 'No safe route found');
+      }
+    } catch (err: any) {
+      setRouteError(err?.message || 'Failed to optimize route');
+    } finally {
+      setIsOptimizing(false);
+    }
+  };
+
+  const handleClearOptimizedRoute = () => {
+    setOptimizedRouteData(null);
+    setRouteError(null);
   };
 
   const hasPfz = Boolean(selectedPFZ || (data.pfz && data.pfz.available && data.pfz.nearest));
@@ -146,9 +180,86 @@ export default function MapScreen() {
           response={data}
           activeLayers={activeLayers}
           selectedPFZId={selectedPFZ?.id}
+          optimizedRoute={optimizedRouteData?.route}
           onSelectCandidate={handleSelectCandidate}
           onViewDetails={() => handleViewAssessment(selectedPFZ)}
         />
+
+        {/* Phase 3 A* Route Optimizer Test Control */}
+        <View style={styles.routeOptCard}>
+          <View style={styles.routeOptHeader}>
+            <View style={styles.routeOptHeaderLeft}>
+              <Zap size={18} color="#D97706" />
+              <Text style={styles.routeOptTitle}>A* Geographic Route Optimizer</Text>
+            </View>
+            {optimizedRouteData && (
+              <TouchableOpacity
+                style={styles.clearBtn}
+                onPress={handleClearOptimizedRoute}
+                accessibilityLabel="Clear Optimized Route"
+              >
+                <X size={14} color="#64748B" />
+                <Text style={styles.clearBtnText}>Clear</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <Text style={styles.routeOptSubtitle}>
+            Avoids Hard-Restricted Maritime Geofences (Demo: [18.80, 72.70] ➔ [19.30, 72.70])
+          </Text>
+
+          {routeError && (
+            <View style={styles.routeErrorBanner}>
+              <AlertCircle size={15} color="#EF4444" />
+              <Text style={styles.routeErrorText}>{routeError}</Text>
+            </View>
+          )}
+
+          {optimizedRouteData && (
+            <View style={styles.routeResultCard}>
+              <View style={styles.routeResultBadge}>
+                <ShieldCheck size={14} color="#15803D" />
+                <Text style={styles.routeResultBadgeText}>Safe Route Found (A* Detour Active)</Text>
+              </View>
+              <View style={styles.routeStatsRow}>
+                <View style={styles.routeStatCol}>
+                  <Text style={styles.routeStatLabel}>Total Distance</Text>
+                  <Text style={styles.routeStatValue}>{optimizedRouteData.total_distance_km?.toFixed(1)} km</Text>
+                </View>
+                <View style={styles.routeStatCol}>
+                  <Text style={styles.routeStatLabel}>Nodes Explored</Text>
+                  <Text style={styles.routeStatValue}>{optimizedRouteData.nodes_explored}</Text>
+                </View>
+                <View style={styles.routeStatCol}>
+                  <Text style={styles.routeStatLabel}>Waypoints</Text>
+                  <Text style={styles.routeStatValue}>{optimizedRouteData.route.length}</Text>
+                </View>
+              </View>
+            </View>
+          )}
+
+          <TouchableOpacity
+            style={[styles.optimizeBtn, isOptimizing && styles.optimizeBtnDisabled]}
+            onPress={handleRunAStarOptimization}
+            disabled={isOptimizing}
+            activeOpacity={0.8}
+          >
+            {isOptimizing ? (
+              <View style={styles.btnRow}>
+                <ActivityIndicator size="small" color="#FFFFFF" />
+                <Text style={styles.optimizeBtnText}>Optimizing Route...</Text>
+              </View>
+            ) : (
+              <View style={styles.btnRow}>
+                <Zap size={16} color="#FFFFFF" />
+                <Text style={styles.optimizeBtnText}>
+                  {optimizedRouteData ? 'Recalculate A* Route' : 'Optimize Route (A* Avoidance)'}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+
 
         {/* SAMUDRA-style Layer Toggles & Legend */}
         <View style={styles.legendWrapper}>
@@ -281,4 +392,133 @@ const styles = StyleSheet.create({
   candidatesWrapper: {
     marginTop: SPACING.md,
   },
+  routeOptCard: {
+    marginTop: SPACING.md,
+    backgroundColor: '#FFFFFF',
+    borderRadius: RADIUS.lg,
+    padding: SPACING.md,
+    borderWidth: 1.5,
+    borderColor: '#FDE68A',
+    ...SHADOWS.md,
+  },
+  routeOptHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  routeOptHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  routeOptTitle: {
+    ...TYPOGRAPHY.bodyMedium,
+    fontWeight: '800',
+    color: '#92400E',
+  },
+  routeOptSubtitle: {
+    ...TYPOGRAPHY.caption,
+    color: '#64748B',
+    marginBottom: 10,
+    fontSize: 11,
+  },
+  clearBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: RADIUS.full,
+  },
+  clearBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  routeErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: RADIUS.sm,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  routeErrorText: {
+    fontSize: 12,
+    color: '#DC2626',
+    fontWeight: '600',
+    flex: 1,
+  },
+  routeResultCard: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  routeResultBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 6,
+  },
+  routeResultBadgeText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  routeStatsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: RADIUS.sm,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+  },
+  routeStatCol: {
+    alignItems: 'center',
+  },
+  routeStatLabel: {
+    fontSize: 10,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  routeStatValue: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginTop: 2,
+  },
+  optimizeBtn: {
+    backgroundColor: '#D97706',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: RADIUS.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...SHADOWS.sm,
+  },
+  optimizeBtnDisabled: {
+    opacity: 0.65,
+  },
+  btnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  optimizeBtnText: {
+    ...TYPOGRAPHY.bodyMedium,
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 13,
+  },
 });
+
