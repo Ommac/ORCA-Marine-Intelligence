@@ -13,6 +13,9 @@ export interface MapViewProps {
   };
   selectedPFZId?: string | null;
   optimizedRoute?: [number, number][];
+  directRoute?: [number, number][];
+  directRouteBlocked?: boolean;
+  directRouteBlockedName?: string;
   onSelectPFZ?: (nearest?: PFZNearest) => void;
   onSelectCandidate?: (candidate: PFZCandidate) => void;
   onViewDetails?: () => void;

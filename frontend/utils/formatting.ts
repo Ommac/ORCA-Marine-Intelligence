@@ -233,10 +233,9 @@ export function getAlertSeverityTheme(severity: AlertSeverityLevel) {
 }
 
 export function formatBoatCategory(widthM: number): string {
-  if (widthM < 4.0) return 'Small Canoe / Dinghy (Under 4 m)';
-  if (widthM < 6.0) return 'FRP / Motorized Craft (4–6 m)';
-  if (widthM < 7.0) return 'Medium Trawler / Gillnetter (6–7 m)';
-  return 'Large Deep-Sea Vessel (7 m+)';
+  if (widthM < 4.0) return 'Non-Mechanised';
+  if (widthM < 6.0) return 'Mechanised — Below 2 Tonne';
+  return 'Mechanised — 2 Tonne & Above';
 }
 
 export function formatAlertTime(isoString?: string): string {
@@ -254,3 +253,26 @@ export function formatAlertTime(isoString?: string): string {
     return isoString;
   }
 }
+
+/**
+ * Calculates Great-Circle Haversine distance between two coordinates in Kilometers (km).
+ */
+export function calculateHaversineDistanceKm(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const earthRadiusKm = 6371.0;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Number((earthRadiusKm * c).toFixed(2));
+}
+

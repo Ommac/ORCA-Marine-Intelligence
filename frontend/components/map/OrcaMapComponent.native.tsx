@@ -12,6 +12,9 @@ export interface MapViewProps {
   activeLayers?: { pfz?: boolean; myLocation?: boolean; distance?: boolean; geofences?: boolean; route?: boolean };
   selectedPFZId?: string | null;
   optimizedRoute?: [number, number][];
+  directRoute?: [number, number][];
+  directRouteBlocked?: boolean;
+  directRouteBlockedName?: string;
   onSelectPFZ?: (nearest?: PFZNearest) => void;
   onSelectCandidate?: (candidate: PFZCandidate) => void;
   onViewDetails?: () => void;
@@ -134,6 +137,9 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
   activeLayers = { pfz: true, myLocation: true, distance: true },
   selectedPFZId,
   optimizedRoute,
+  directRoute,
+  directRouteBlocked,
+  directRouteBlockedName,
   onSelectPFZ,
   onSelectCandidate,
 }) => {
@@ -206,33 +212,44 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
   const bounds = useMemo(() => calculatePFZBounds(features), [features]);
   const center: Region = { latitude: fisherLat, longitude: fisherLon, latitudeDelta: 4, longitudeDelta: 4 };
 
+  const allRoutePoints = useMemo(() => {
+    const points: [number, number][] = [];
+    if (optimizedRoute && optimizedRoute.length >= 2) {
+      points.push(...optimizedRoute);
+    }
+    if (directRoute && directRoute.length >= 2) {
+      points.push(...directRoute);
+    }
+    return points;
+  }, [optimizedRoute, directRoute]);
+
   useEffect(() => {
-    if (optimizedRoute && optimizedRoute.length >= 2 && mapRef.current) {
+    if (allRoutePoints.length >= 2 && mapRef.current) {
       mapRef.current.fitToCoordinates(
-        optimizedRoute.map(([latitude, longitude]) => ({ latitude, longitude })),
+        allRoutePoints.map(([latitude, longitude]: [number, number]) => ({ latitude, longitude })),
         { edgePadding: { top: 50, right: 50, bottom: 50, left: 50 }, animated: true }
       );
     } else {
       const coordinates = featureCoordinates(features);
       if (mapRef.current && coordinates.length) {
         mapRef.current.fitToCoordinates(
-          coordinates.map(([latitude, longitude]) => ({ latitude, longitude })),
+          coordinates.map(([latitude, longitude]: [number, number]) => ({ latitude, longitude })),
           { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: true }
         );
       }
     }
-  }, [features, bounds, optimizedRoute]);
+  }, [features, bounds, allRoutePoints]);
 
   const recenter = () => {
-    if (optimizedRoute && optimizedRoute.length >= 2 && mapRef.current) {
+    if (allRoutePoints.length >= 2 && mapRef.current) {
       mapRef.current.fitToCoordinates(
-        optimizedRoute.map(([latitude, longitude]) => ({ latitude, longitude })),
+        allRoutePoints.map(([latitude, longitude]: [number, number]) => ({ latitude, longitude })),
         { edgePadding: { top: 50, right: 50, bottom: 50, left: 50 }, animated: true }
       );
       return;
     }
     const coordinates = featureCoordinates(features);
-    if (mapRef.current && coordinates.length) mapRef.current.fitToCoordinates(coordinates.map(([latitude, longitude]) => ({ latitude, longitude })), { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: true });
+    if (mapRef.current && coordinates.length) mapRef.current.fitToCoordinates(coordinates.map(([latitude, longitude]: [number, number]) => ({ latitude, longitude })), { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: true });
     else mapRef.current?.animateToRegion(center, 600);
   };
 
@@ -249,24 +266,47 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
       {activeLayers.myLocation && <Circle center={{ latitude: fisherLat, longitude: fisherLon }} radius={500} strokeColor="#38BDF8" fillColor="rgba(10,37,64,0.7)" />}
       {activeLayers.myLocation && <Marker coordinate={{ latitude: fisherLat, longitude: fisherLon }} title="Fishing Location" />}
 
-      {/* Phase 3 Optimized A* Route Overlay & Markers */}
+      {/* Phase 3 Direct Route Overlay (Dashed) */}
+      {(activeLayers.route ?? true) && directRoute && directRoute.length >= 2 && (
+        <>
+          <Polyline
+            coordinates={directRoute.map(([latitude, longitude]: [number, number]) => ({ latitude, longitude }))}
+            strokeColor={directRouteBlocked ? '#EF4444' : '#64748B'}
+            strokeWidth={3.5}
+            lineDashPattern={[8, 8]}
+          />
+          {directRouteBlocked && (
+            <Marker
+              coordinate={{
+                latitude: (directRoute[0][0] + directRoute[1][0]) / 2,
+                longitude: (directRoute[0][1] + directRoute[1][1]) / 2,
+              }}
+              pinColor="red"
+              title="✕ DIRECT ROUTE BLOCKED"
+              description={`Crosses ${directRouteBlockedName || 'Restricted Waters'}`}
+            />
+          )}
+        </>
+      )}
+
+      {/* Phase 3 Optimized A* Safe Route Overlay & Markers */}
       {(activeLayers.route ?? true) && optimizedRoute && optimizedRoute.length >= 2 && (
         <>
           <Polyline
-            coordinates={optimizedRoute.map(([latitude, longitude]) => ({ latitude, longitude }))}
+            coordinates={optimizedRoute.map(([latitude, longitude]: [number, number]) => ({ latitude, longitude }))}
             strokeColor="#F59E0B"
             strokeWidth={4.5}
           />
           <Marker
             coordinate={{ latitude: optimizedRoute[0][0], longitude: optimizedRoute[0][1] }}
             pinColor="green"
-            title="📍 Route Start"
+            title="🟢 START"
             description={`Coordinates: ${optimizedRoute[0][0].toFixed(3)}, ${optimizedRoute[0][1].toFixed(3)}`}
           />
           <Marker
             coordinate={{ latitude: optimizedRoute[optimizedRoute.length - 1][0], longitude: optimizedRoute[optimizedRoute.length - 1][1] }}
             pinColor="red"
-            title="🎯 Route Destination"
+            title="🔴 DESTINATION"
             description={`Coordinates: ${optimizedRoute[optimizedRoute.length - 1][0].toFixed(3)}, ${optimizedRoute[optimizedRoute.length - 1][1].toFixed(3)}`}
           />
         </>

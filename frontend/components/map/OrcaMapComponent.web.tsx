@@ -31,6 +31,9 @@ export interface MapViewProps {
   activeLayers?: { pfz?: boolean; myLocation?: boolean; distance?: boolean; geofences?: boolean; route?: boolean };
   selectedPFZId?: string | null;
   optimizedRoute?: [number, number][];
+  directRoute?: [number, number][];
+  directRouteBlocked?: boolean;
+  directRouteBlockedName?: string;
   onSelectPFZ?: (nearest?: PFZNearest) => void;
   onSelectCandidate?: (candidate: PFZCandidate) => void;
   onViewDetails?: () => void;
@@ -228,6 +231,9 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
   activeLayers = { pfz: true, myLocation: true, distance: true },
   selectedPFZId,
   optimizedRoute,
+  directRoute,
+  directRouteBlocked,
+  directRouteBlockedName,
   onSelectCandidate,
   onViewDetails,
 }) => {
@@ -316,14 +322,21 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
   const bounds = useMemo(() => calculatePFZBounds(features), [features]);
 
   const routeBounds = useMemo(() => {
-    if (!optimizedRoute || optimizedRoute.length < 2) return null;
-    const lats = optimizedRoute.map((p) => p[0]);
-    const lons = optimizedRoute.map((p) => p[1]);
+    const points: [number, number][] = [];
+    if (optimizedRoute && optimizedRoute.length >= 2) {
+      points.push(...optimizedRoute);
+    }
+    if (directRoute && directRoute.length >= 2) {
+      points.push(...directRoute);
+    }
+    if (points.length < 2) return null;
+    const lats = points.map((p) => p[0]);
+    const lons = points.map((p) => p[1]);
     return [
       [Math.min(...lats), Math.min(...lons)],
       [Math.max(...lats), Math.max(...lons)],
     ] as [PFZLatLng, PFZLatLng];
-  }, [optimizedRoute]);
+  }, [optimizedRoute, directRoute]);
 
 
   const targetPointForRoute = useMemo(() => {
@@ -400,7 +413,65 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
         {activeLayers.myLocation && <CircleMarker center={fallback} radius={8} pathOptions={{ color: '#38BDF8', fillColor: '#0A2540', fillOpacity: 1 }}><Popup><strong>Fishing Location</strong></Popup></CircleMarker>}
         {activeLayers.distance && distanceLine && <Polyline positions={distanceLine.features[0].geometry.coordinates.map(([longitude, latitude]: [number, number]) => [latitude, longitude] as PFZLatLng)} pathOptions={{ color: '#38BDF8', weight: 3, dashArray: '8 8' }} />}
 
-        {/* Phase 3 Optimized A* Route Overlay & Markers */}
+        {/* Phase 3 Direct Route vs A* Safe Route Overlay & Verification Markers */}
+        {(activeLayers.route ?? true) && directRoute && directRoute.length >= 2 && (
+          <>
+            <Polyline
+              positions={directRoute as PFZLatLng[]}
+              pathOptions={{
+                color: directRouteBlocked ? '#EF4444' : '#64748B',
+                weight: 3.5,
+                dashArray: '8, 8',
+                opacity: 0.9,
+              }}
+            >
+              <Popup>
+                <div style={{ fontFamily: 'sans-serif', minWidth: 160 }}>
+                  <strong style={{ color: directRouteBlocked ? '#EF4444' : '#15803D' }}>
+                    {directRouteBlocked ? '❌ Direct Route: BLOCKED' : '✅ Direct Route: CLEAR'}
+                  </strong>
+                  <div style={{ fontSize: 11, color: '#334155', marginTop: 3 }}>
+                    {directRouteBlocked
+                      ? `Crosses Restricted Waters (${directRouteBlockedName || '1 Restricted Zone'})`
+                      : 'Clear direct path without hard geofence obstacles.'}
+                  </div>
+                </div>
+              </Popup>
+            </Polyline>
+
+            {/* Blocked Intersection Visual Badge on Direct Route */}
+            {directRouteBlocked && (
+              <CircleMarker
+                center={[
+                  (directRoute[0][0] + directRoute[1][0]) / 2,
+                  (directRoute[0][1] + directRoute[1][1]) / 2,
+                ]}
+                radius={10}
+                pathOptions={{
+                  color: '#FFFFFF',
+                  fillColor: '#DC2626',
+                  fillOpacity: 1,
+                  weight: 2.5,
+                }}
+              >
+                <Popup>
+                  <div style={{ fontFamily: 'sans-serif', minWidth: 175 }}>
+                    <strong style={{ color: '#DC2626' }}>✕ DIRECT ROUTE BLOCKED</strong>
+                    <div style={{ fontSize: 11, marginTop: 4, color: '#334155', lineHeight: 1.3 }}>
+                      Direct line attempts to cross restricted polygon:{' '}
+                      <strong>{directRouteBlockedName || 'Restricted Waters'}</strong>.
+                    </div>
+                    <div style={{ fontSize: 10, marginTop: 4, color: '#D97706', fontWeight: 700 }}>
+                      A* Detour Generated Around Obstacle ➔
+                    </div>
+                  </div>
+                </Popup>
+              </CircleMarker>
+            )}
+          </>
+        )}
+
+        {/* Phase 3 Optimized A* Safe Route Overlay & Markers */}
         {(activeLayers.route ?? true) && optimizedRoute && optimizedRoute.length >= 2 && (
           <>
             <Polyline
@@ -408,10 +479,13 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
               pathOptions={{ color: '#F59E0B', weight: 4.5, opacity: 0.95 }}
             >
               <Popup>
-                <div style={{ fontFamily: 'sans-serif' }}>
-                  <strong>⚡ A* Optimized Safe Route</strong>
-                  <div style={{ fontSize: 11, color: '#16A34A', fontWeight: 'bold', marginTop: 2 }}>
-                    Hard Geofence Avoidance Active
+                <div style={{ fontFamily: 'sans-serif', minWidth: 160 }}>
+                  <strong style={{ color: '#D97706' }}>⚡ A* SAFE ROUTE</strong>
+                  <div style={{ fontSize: 11, color: '#15803D', fontWeight: 'bold', marginTop: 2 }}>
+                    ✅ Detours around Restricted Waters (0 Intersections)
+                  </div>
+                  <div style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>
+                    Waypoints: {optimizedRoute.length} • Search Algorithm: A*
                   </div>
                 </div>
               </Popup>
@@ -422,7 +496,7 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
               pathOptions={{ color: '#10B981', fillColor: '#064E3B', fillOpacity: 1, weight: 3 }}
             >
               <Popup>
-                <strong>📍 Route Start</strong>
+                <strong>🟢 START</strong>
                 <div>Lat: {optimizedRoute[0][0].toFixed(4)}°, Lon: {optimizedRoute[0][1].toFixed(4)}°</div>
               </Popup>
             </CircleMarker>
@@ -432,7 +506,7 @@ export const OrcaMapComponent: React.FC<MapViewProps> = ({
               pathOptions={{ color: '#EF4444', fillColor: '#991B1B', fillOpacity: 1, weight: 3 }}
             >
               <Popup>
-                <strong>🎯 Route Destination</strong>
+                <strong>🔴 DESTINATION</strong>
                 <div>Lat: {optimizedRoute[optimizedRoute.length - 1][0].toFixed(4)}°, Lon: {optimizedRoute[optimizedRoute.length - 1][1].toFixed(4)}°</div>
               </Popup>
             </CircleMarker>

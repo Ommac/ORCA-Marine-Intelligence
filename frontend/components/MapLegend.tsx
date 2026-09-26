@@ -90,7 +90,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
             </View>
             <View style={styles.geofenceBadgeItem}>
               <View style={[styles.colorBox, { backgroundColor: 'rgba(249, 115, 22, 0.35)', borderColor: '#F97316' }]} />
-              <Text style={styles.geofenceBadgeText}>Restricted Waters</Text>
+              <Text style={styles.geofenceBadgeText}>🔴 Restricted Waters</Text>
             </View>
             <View style={styles.geofenceBadgeItem}>
               <View style={[styles.colorBox, { backgroundColor: 'rgba(16, 185, 129, 0.35)', borderColor: '#10B981' }]} />
@@ -103,6 +103,29 @@ export const MapLegend: React.FC<MapLegendProps> = ({
           </View>
         </View>
       )}
+
+      {/* A* Safe Route & Direct Route Demonstration Legend */}
+      <View style={styles.geofenceLegendSection}>
+        <Text style={styles.geofenceLegendHeader}>A* ROUTING & NAVIGATION</Text>
+        <View style={styles.geofenceGrid}>
+          <View style={styles.geofenceBadgeItem}>
+            <View style={styles.safeRouteLine} />
+            <Text style={styles.geofenceBadgeText}>━━━ A* Safe Route</Text>
+          </View>
+          <View style={styles.geofenceBadgeItem}>
+            <View style={styles.directRouteLine} />
+            <Text style={styles.geofenceBadgeText}>- - - Direct Route</Text>
+          </View>
+          <View style={styles.geofenceBadgeItem}>
+            <View style={[styles.circleDot, { backgroundColor: '#10B981' }]} />
+            <Text style={styles.geofenceBadgeText}>🟢 Start Point</Text>
+          </View>
+          <View style={styles.geofenceBadgeItem}>
+            <View style={[styles.circleDot, { backgroundColor: '#EF4444' }]} />
+            <Text style={styles.geofenceBadgeText}>🔴 Destination</Text>
+          </View>
+        </View>
+      </View>
     </View>
   );
 };
@@ -197,5 +220,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: COLORS.textPrimary,
+  },
+  safeRouteLine: {
+    width: 16,
+    height: 3.5,
+    backgroundColor: '#F59E0B',
+    borderRadius: 2,
+  },
+  directRouteLine: {
+    width: 16,
+    height: 3,
+    backgroundColor: '#EF4444',
+    borderRadius: 1.5,
+  },
+  circleDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
 });

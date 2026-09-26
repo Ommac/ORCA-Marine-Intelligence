@@ -23,7 +23,11 @@ export const BoatSizeSelector: React.FC<BoatSizeSelectorProps> = ({
 
       <View style={styles.grid}>
         {BOAT_SIZES.map((option) => {
-          const isSelected = option.boat_width_m === selectedBoatWidth;
+          const isSelected =
+            option.boat_width_m === selectedBoatWidth ||
+            (option.id === 'mechanised_2t_above' && selectedBoatWidth >= 6.0) ||
+            (option.id === 'mechanised_below_2t' && selectedBoatWidth >= 4.0 && selectedBoatWidth < 6.0) ||
+            (option.id === 'non_mechanised' && selectedBoatWidth < 4.0);
 
           return (
             <TouchableOpacity
@@ -59,7 +63,7 @@ export const BoatSizeSelector: React.FC<BoatSizeSelectorProps> = ({
                   styles.sizeSublabel,
                   isSelected && styles.sizeSublabelSelected,
                 ]}
-                numberOfLines={1}
+                numberOfLines={2}
               >
                 {option.sublabel}
               </Text>

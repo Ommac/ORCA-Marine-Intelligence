@@ -222,19 +222,19 @@ def extract_boat_width(query: str, default: float = 5.0) -> float:
 
 def extract_entity_rank(text: str, default: Optional[int] = None) -> Optional[int]:
     """
-    Extract ordinal or cardinal rank from text (e.g. '2nd', 'second', '3rd', 'third', 'nearest', '1st').
+    Extract ordinal or cardinal rank from text (e.g. '2nd', 'second', '3rd', 'third', 'nearest', '1st', 'जवळचा', 'पहिला').
     Returns None if no rank or ordinal is specified.
     """
     t = text.lower()
-    if re.search(r"\b(2nd|second)\b", t) or "2 nd" in t:
+    if re.search(r"\b(2nd|second)\b", t) or "2 nd" in t or "दुसरा" in t or "दुसरी" in t or "दूसरा" in t or "दूसरी" in t:
         return 2
-    if re.search(r"\b(3rd|third)\b", t) or "3 rd" in t:
+    if re.search(r"\b(3rd|third)\b", t) or "3 rd" in t or "तिसरा" in t or "तिसरी" in t or "तीसरा" in t or "तीसरी" in t:
         return 3
-    if re.search(r"\b(4th|fourth)\b", t) or "4 th" in t:
+    if re.search(r"\b(4th|fourth)\b", t) or "4 th" in t or "चौथा" in t or "चौथी" in t:
         return 4
-    if re.search(r"\b(5th|fifth)\b", t) or "5 th" in t:
+    if re.search(r"\b(5th|fifth)\b", t) or "5 th" in t or "पाचवा" in t or "पाचवी" in t or "पांचवा" in t or "पांचवी" in t:
         return 5
-    if re.search(r"\b(1st|first)\b", t) or "1 st" in t:
+    if re.search(r"\b(1st|first)\b", t) or "1 st" in t or "पहिला" in t or "पहिली" in t or "पहला" in t or "पहली" in t:
         return 1
     m = re.search(r"(?:rank|number|#|zone)\s*(\d+)", t)
     if m:
@@ -244,7 +244,7 @@ def extract_entity_rank(text: str, default: Optional[int] = None) -> Optional[in
                 return val
         except ValueError:
             pass
-    if re.search(r"\bnearest\b", t):
+    if re.search(r"\b(nearest|closest)\b", t) or any(k in t for k in ["जवळचा", "जवळचे", "जवळपासचे", "नजदीकी", "नजदीक", "पास का", "पास की", "सबसे नजदीकी"]):
         return 1
     return default
 
@@ -312,10 +312,50 @@ def classify_query(query: str) -> Tuple[str, List[str], bool]:
 
     # Broad live-data signals.
     pfz_keywords = [
+        # English terms
         "pfz", "potential fishing zone", "potential fishing zones",
-        "fishing zone", "fishing zones", "fish zone", "best fishing area",
-        "nearest fishing zone", "nearest pfz", "nearby fishing zone",
-        "find a fishing zone", "find nearest pfz", "nearest potential fishing zone",
+        "fishing zone", "fishing zones", "fish zone", "fish zones",
+        "fishing area", "fishing areas", "fishing ground", "fishing grounds",
+        "fishing spot", "fishing spots", "fishing location", "fishing locations",
+        "best fishing area", "best fishing spot", "best place to fish",
+        "nearest fishing zone", "nearest fishing area", "nearest pfz",
+        "nearest potential fishing zone", "closest pfz", "closest fishing zone",
+        "closest fishing area", "closest fishing spot",
+        "nearby fishing zone", "nearby fishing zones", "nearby fishing area",
+        "nearby fishing areas", "nearby pfz", "nearby fishing spot", "nearby fishing spots",
+        "find a fishing zone", "find fishing zones", "find fishing zone", "find fishing areas",
+        "find nearest pfz", "find pfz", "fishing zones near me", "fishing zone near me",
+        "fishing areas near me", "fishing area near me", "fishing spot near me",
+        "show the nearest pfz", "show nearest pfz", "show the nearest fishing zone",
+        "show nearest fishing zone", "show nearby fishing areas", "show nearby fishing zone",
+        "show nearby fishing zones", "which pfz is closest", "what is the nearest pfz",
+        "what is nearest pfz", "which pfz is nearest", "which fishing area is nearest",
+        "which fishing zone is nearest", "which fishing zone is closest",
+
+        # Marathi terms (मराठी)
+        "मासेमारी क्षेत्र", "मासेमारीचे क्षेत्र", "मासेमारी क्षेत्रा", "मासेमारी क्षेत्रांची",
+        "मासेमारी ठिकाण", "मासेमारीचे ठिकाण", "मासेमारीची जागा", "मासेमारी जागा", "मासेमारी भाग",
+        "मासे पकडण्याचे ठिकाण", "मासे पकडणे", "मासेमारी स्थळ", "मासेमारी",
+        "जवळचा मासेमारी क्षेत्र", "जवळचे मासेमारी क्षेत्र", "जवळचे मासेमारीचे क्षेत्र",
+        "जवळपासचे मासेमारी क्षेत्र", "जवळपासचे मासेमारीचे क्षेत्र", "जवळचा मासेमारी",
+        "माझ्या जवळचे मासेमारी क्षेत्र", "माझ्या जवळचा pfz", "माझ्या जवळचे pfz",
+        "माझ्या ठिकाणापासून जवळचे मासेमारी क्षेत्र", "माझ्या जवळचे मासेमारीचे ठिकाण",
+        "माझ्या जवळचे मासेमारी ठिकाण",
+        "जवळचा pfz", "जवळचे pfz", "जवळपासचे pfz", "जवळचा पीएफझेड", "जवळचे पीएफझेड",
+        "पीएफझेड",
+
+        # Hindi terms (हिंदी)
+        "मछली पकड़ने का क्षेत्र", "मछली पकड़ने के क्षेत्र", "मछली पकड़ने की जगह",
+        "मछली पकड़ने का स्थान", "मछली पकड़ने वाला क्षेत्र", "मत्स्य क्षेत्र", "मत्स्य पालन क्षेत्र",
+        "मछली क्षेत्र", "मछली का क्षेत्र",
+        "मेरे पास का मछली पकड़ने का क्षेत्र", "मेरे पास का pfz", "मेरे पास का पीएफजेड",
+        "सबसे नजदीकी मछली पकड़ने का क्षेत्र", "मेरे नजदीक के मछली पकड़ने के क्षेत्र",
+        "नजदीकी मछली क्षेत्र", "नजदीकी pfz", "पास का pfz", "पास की मछली पकड़ने की जगह",
+        "पीएफजेड", "पीएफ़ज़ेड",
+
+        # Transliterations / Other Indic terms
+        "masemari", "masemari kshetra", "machli pakadne ka kshetra", "machhli kshetra",
+        "machli spot",
     ]
     weather_keywords = [
         "marine weather", "weather", "wave", "waves", "wave height",
@@ -420,20 +460,46 @@ def resolve_context_and_intent(
             "open map", "take me to map", "display on map", "locate on map",
             "show me on map", "plot it on map", "see on map", "on map", "in map",
             "on the map", "in the map", "to the map",
+            "नकाशावर", "नकाशा", "नक्शे पर", "नक्शा", "मॅपवर", "मॅप", "मैप पर", "मैप",
         ])
     )
     action = "show_on_map" if is_map_action else "query"
 
     # Explicit direct PFZ signals in current query
     direct_pfz_keywords = [
+        # English
         "pfz", "potential fishing zone", "potential fishing zones",
         "fishing zone", "fishing zones", "fish zone", "fish zones",
-        "best fishing area", "nearest fishing zone", "nearest pfz",
-        "nearby fishing zone", "nearby fishing zones", "find a fishing zone",
-        "find nearest pfz", "find pfz", "where to fish", "where should i fish",
-        "where should i go fishing", "where to go fishing", "fishing spot",
-        "fishing spots", "recommend fishing spot", "recommend fishing area",
-        "best place to fish",
+        "fishing area", "fishing areas", "fishing ground", "fishing grounds",
+        "fishing spot", "fishing spots", "fishing location", "fishing locations",
+        "best fishing area", "best fishing spot", "best place to fish",
+        "nearest fishing zone", "nearest fishing area", "nearest pfz",
+        "nearest potential fishing zone", "closest pfz", "closest fishing zone",
+        "closest fishing area", "closest fishing spot",
+        "nearby fishing zone", "nearby fishing zones", "nearby fishing area",
+        "nearby fishing areas", "nearby pfz", "find a fishing zone",
+        "find fishing zones", "find nearest pfz", "find pfz",
+        "where to fish", "where should i fish", "where should i go fishing",
+        "where to go fishing", "recommend fishing spot", "recommend fishing area",
+        "fishing zones near me", "fishing zone near me", "fishing areas near me",
+        "fishing area near me", "show the nearest pfz", "show nearby fishing areas",
+        "which pfz is closest", "what is the nearest pfz",
+
+        # Marathi
+        "मासेमारी क्षेत्र", "मासेमारीचे क्षेत्र", "मासेमारी ठिकाण", "मासेमारीचे ठिकाण",
+        "मासेमारीची जागा", "मासेमारी जागा", "मासेमारी स्थळ", "मासेमारी भाग", "मासेमारी",
+        "जवळचा मासेमारी क्षेत्र", "जवळचे मासेमारी क्षेत्र", "जवळचे मासेमारीचे क्षेत्र",
+        "जवळपासचे मासेमारी क्षेत्र", "जवळपासचे मासेमारीचे क्षेत्र",
+        "माझ्या जवळचे मासेमारी क्षेत्र", "माझ्या जवळचा pfz", "माझ्या जवळचे pfz",
+        "माझ्या ठिकाणापासून जवळचे मासेमारी क्षेत्र", "माझ्या जवळचे मासेमारीचे ठिकाण",
+        "जवळचा pfz", "जवळचे pfz", "जवळपासचे pfz", "पीएफझेड",
+
+        # Hindi
+        "मछली पकड़ने का क्षेत्र", "मछली पकड़ने के क्षेत्र", "मछली पकड़ने की जगह",
+        "मछली पकड़ने का स्थान", "मत्स्य क्षेत्र", "मछली क्षेत्र",
+        "मेरे पास का मछली पकड़ने का क्षेत्र", "मेरे पास का pfz",
+        "सबसे नजदीकी मछली पकड़ने का क्षेत्र", "मेरे नजदीक के मछली पकड़ने के क्षेत्र",
+        "नजदीकी pfz", "पास का pfz", "पीएफजेड", "पीएफ़ज़ेड",
     ]
     has_direct_pfz_keyword = contains_any(q_lower, direct_pfz_keywords)
 
@@ -1701,12 +1767,24 @@ def final_response_node(state: ORCAState) -> Dict[str, Any]:
     ])
 
     pfz_list_keywords = [
-        "nearby fishing zone", "nearby fishing zones", "nearby pfz",
+        # English
+        "nearby fishing zone", "nearby fishing zones", "nearby fishing area",
+        "nearby fishing areas", "nearby pfz",
         "find fishing zones", "find nearest pfz", "find pfz",
-        "show nearby", "show fishing zones", "where should i go fishing",
-        "where to go fishing", "where should i fish", "where to fish",
-        "fishing spots", "best fishing area", "recommend fishing",
+        "show nearby", "show fishing zones", "show nearby fishing areas",
+        "where should i go fishing", "where to go fishing", "where should i fish",
+        "where to fish", "fishing spots", "best fishing area", "recommend fishing",
         "top 3", "top 3 pfz", "3 pfz", "nearest 3", "all pfz",
+        "fishing areas near me", "fishing zones near me",
+
+        # Marathi
+        "जवळचे मासेमारी क्षेत्र", "जवळपासचे मासेमारी क्षेत्र", "मासेमारी क्षेत्रे",
+        "माझ्या जवळचे मासेमारी क्षेत्र", "जवळपासचे मासेमारीचे क्षेत्र",
+        "मासेमारी ठिकाणे", "मासेमारीची ठिकाणे",
+
+        # Hindi
+        "मछली पकड़ने के क्षेत्र", "नजदीकी मछली पकड़ने के क्षेत्र",
+        "मेरे पास के मछली पकड़ने के क्षेत्र", "मेरे नजदीक के मछली पकड़ने के क्षेत्र",
     ]
 
     is_list_query = (

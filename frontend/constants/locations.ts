@@ -101,27 +101,21 @@ export const PRESET_LOCATIONS: PresetLocation[] = [
 
 export const BOAT_SIZES: BoatSizeOption[] = [
   {
-    id: 'under_4m',
-    label: 'Under 4 m',
-    sublabel: 'Small Canoe / Dinghy',
+    id: 'non_mechanised',
+    label: 'Non-Mechanised',
+    sublabel: 'Traditional / Non-powered fishing vessel',
     boat_width_m: 3.5,
   },
   {
-    id: '4_6m',
-    label: '4–6 m',
-    sublabel: 'FRP / Motorized Craft',
+    id: 'mechanised_below_2t',
+    label: 'Mechanised — Below 2 Tonne',
+    sublabel: 'Mechanised fishing vessel',
     boat_width_m: 5.0,
   },
   {
-    id: '6_7m',
-    label: '6–7 m',
-    sublabel: 'Medium Trawler / Gillnetter',
-    boat_width_m: 6.5,
-  },
-  {
-    id: '7m_plus',
-    label: '7 m+',
-    sublabel: 'Large Deep-Sea Vessel',
+    id: 'mechanised_2t_above',
+    label: 'Mechanised — 2 Tonne & Above',
+    sublabel: 'Mechanised fishing vessel',
     boat_width_m: 7.5,
   },
 ];
